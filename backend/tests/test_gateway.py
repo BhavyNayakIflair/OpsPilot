@@ -50,3 +50,21 @@ def test_ollama_reports_clear_provider_failure_after_retry():
     with pytest.raises(ProviderError, match="Ollama request failed after 2 attempts"):
         provider.generate("say ok")
     assert attempts == 2
+
+
+def test_ollama_falls_back_to_legacy_embedding_endpoint():
+    paths = []
+
+    def handler(request):
+        paths.append(request.url.path)
+        if request.url.path == "/api/embed":
+            return httpx.Response(404)
+        return httpx.Response(200, json={"embedding": [0.0] * 768})
+
+    provider = OllamaProvider(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    vectors = provider.embed(["first", "second"])
+
+    assert len(vectors) == 2
+    assert all(len(vector) == 768 for vector in vectors)
+    assert paths.count("/api/embed") == 2
+    assert paths.count("/api/embeddings") == 2

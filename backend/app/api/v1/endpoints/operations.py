@@ -8,7 +8,8 @@ from app.models.user import User
 from app.models.membership import Membership, RoleType
 from app.models.crm import Lead
 from app.models.operations import Employee, Project, ProjectTask, TimeEntry, LeaveRequest
-from app.schemas.operations import EmployeeCreate, EmployeeRead, ProjectCreate, ProjectRead, TaskCreate, TaskRead, TimeEntryCreate, TimeEntryRead, LeaveCreate, LeaveRead
+from app.schemas.operations import (EmployeeCreate, EmployeeRead, EmployeeUpdate, ProjectCreate, ProjectRead, ProjectUpdate,
+    TaskCreate, TaskRead, TimeEntryCreate, TimeEntryRead, TimeEntryUpdate, LeaveCreate, LeaveRead, LeaveUpdate)
 
 router = APIRouter()
 
@@ -31,6 +32,21 @@ async def create_person(data: EmployeeCreate, org: Organization = Depends(get_cu
     row = Employee(org_id=org.id, **data.model_dump()); db.add(row); await db.commit(); await db.refresh(row); return row
 
 
+@router.patch("/people/{employee_id}", response_model=EmployeeRead)
+async def update_person(employee_id: str, data: EmployeeUpdate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.FINANCE]))):
+    row = await _owned(db, Employee, employee_id, org.id)
+    for key, value in data.model_dump(exclude_unset=True).items(): setattr(row, key, value)
+    await db.commit(); await db.refresh(row); return row
+
+
+@router.delete("/people/{employee_id}", status_code=204)
+async def deactivate_person(employee_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.FINANCE]))):
+    row = await _owned(db, Employee, employee_id, org.id)
+    # Preserve time and leave history; DELETE is a reversible soft-deactivation.
+    row.is_active = False
+    await db.commit()
+
+
 @router.get("/projects", response_model=list[ProjectRead])
 async def list_projects(org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     return (await db.scalars(select(Project).where(Project.org_id == org.id).order_by(Project.created_at.desc()))).all()
@@ -42,6 +58,25 @@ async def create_project(data: ProjectCreate, org: Organization = Depends(get_cu
         lead = await db.scalar(select(Lead).where(Lead.id == data.lead_id, Lead.org_id == org.id))
         if not lead: raise HTTPException(status_code=404, detail="Lead not found")
     row = Project(org_id=org.id, **data.model_dump()); db.add(row); await db.commit(); await db.refresh(row); return row
+
+
+@router.patch("/projects/{project_id}", response_model=ProjectRead)
+async def update_project(project_id: str, data: ProjectUpdate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, Project, project_id, org.id)
+    changes = data.model_dump(exclude_unset=True)
+    if changes.get("lead_id"):
+        await _owned(db, Lead, changes["lead_id"], org.id)
+    for key, value in changes.items(): setattr(row, key, value)
+    await db.commit(); await db.refresh(row); return row
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+async def delete_project(project_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, Project, project_id, org.id)
+    if await db.scalar(select(TimeEntry.id).where(TimeEntry.org_id == org.id, TimeEntry.project_id == row.id).limit(1)):
+        raise HTTPException(status_code=409, detail="Projects with time history cannot be deleted; archive the project instead")
+    row.status = "archived"
+    await db.commit()
 
 
 @router.get("/projects/{project_id}/tasks", response_model=list[TaskRead])
@@ -65,6 +100,14 @@ async def update_task(task_id: str, data: dict, org: Organization = Depends(get_
     if data.get("assignee_id"): await _owned(db, Employee, data["assignee_id"], org.id)
     for key, value in data.items(): setattr(row, key, value)
     await db.commit(); await db.refresh(row); return row
+
+
+@router.delete("/tasks/{task_id}", status_code=204)
+async def delete_task(task_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, ProjectTask, task_id, org.id)
+    if await db.scalar(select(TimeEntry.id).where(TimeEntry.org_id == org.id, TimeEntry.task_id == row.id).limit(1)):
+        raise HTTPException(status_code=409, detail="Tasks with time history cannot be deleted")
+    await db.delete(row); await db.commit()
 
 
 @router.get("/timesheets", response_model=list[TimeEntryRead])
@@ -92,6 +135,33 @@ async def create_time_entry(data: TimeEntryCreate, user: User = Depends(get_curr
     db.add(row); await db.commit(); await db.refresh(row); return row
 
 
+@router.patch("/timesheets/{entry_id}", response_model=TimeEntryRead)
+async def update_time_entry(entry_id: str, data: TimeEntryUpdate, user: User = Depends(get_current_user), membership: Membership = Depends(get_current_membership), org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, TimeEntry, entry_id, org.id)
+    can_manage = membership.role in (RoleType.OWNER.value, RoleType.APPROVER.value, RoleType.PROJECT_MANAGER.value, RoleType.FINANCE.value)
+    if row.approval_status != "pending" or (row.user_id != user.id and not can_manage):
+        raise HTTPException(status_code=403, detail="Only your pending entries can be edited")
+    changes = data.model_dump(exclude_unset=True)
+    project_id = changes.get("project_id", row.project_id)
+    await _owned(db, Project, project_id, org.id)
+    task_id = changes.get("task_id", row.task_id)
+    if task_id:
+        task = await _owned(db, ProjectTask, task_id, org.id)
+        if task.project_id != project_id: raise HTTPException(status_code=422, detail="Task must belong to the selected project")
+    if "entry_date" in changes and changes["entry_date"] is None: raise HTTPException(status_code=422, detail="Entry date is required")
+    for key, value in changes.items(): setattr(row, key, value)
+    await db.commit(); await db.refresh(row); return row
+
+
+@router.delete("/timesheets/{entry_id}", status_code=204)
+async def delete_time_entry(entry_id: str, user: User = Depends(get_current_user), membership: Membership = Depends(get_current_membership), org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, TimeEntry, entry_id, org.id)
+    can_manage = membership.role in (RoleType.OWNER.value, RoleType.APPROVER.value, RoleType.PROJECT_MANAGER.value, RoleType.FINANCE.value)
+    if row.approval_status != "pending" or (row.user_id != user.id and not can_manage):
+        raise HTTPException(status_code=403, detail="Only your pending entries can be deleted")
+    await db.delete(row); await db.commit()
+
+
 @router.patch("/timesheets/{entry_id}/approval", response_model=TimeEntryRead)
 async def approve_time_entry(entry_id: str, data: dict, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.APPROVER, RoleType.PROJECT_MANAGER, RoleType.FINANCE]))):
     status_value = data.get("status")
@@ -110,3 +180,22 @@ async def create_leave_request(data: LeaveCreate, org: Organization = Depends(ge
     if data.end_date < data.start_date: raise HTTPException(status_code=422, detail="End date must be on or after start date")
     await _owned(db, Employee, data.employee_id, org.id)
     row = LeaveRequest(org_id=org.id, **data.model_dump()); db.add(row); await db.commit(); await db.refresh(row); return row
+
+
+@router.patch("/leave-requests/{request_id}", response_model=LeaveRead)
+async def update_leave_request(request_id: str, data: LeaveUpdate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, LeaveRequest, request_id, org.id)
+    if row.status != "pending": raise HTTPException(status_code=409, detail="Reviewed leave requests cannot be edited")
+    changes = data.model_dump(exclude_unset=True)
+    start_date = changes.get("start_date", row.start_date)
+    end_date = changes.get("end_date", row.end_date)
+    if end_date < start_date: raise HTTPException(status_code=422, detail="End date must be on or after start date")
+    for key, value in changes.items(): setattr(row, key, value)
+    await db.commit(); await db.refresh(row); return row
+
+
+@router.delete("/leave-requests/{request_id}", status_code=204)
+async def delete_leave_request(request_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, LeaveRequest, request_id, org.id)
+    if row.status != "pending": raise HTTPException(status_code=409, detail="Reviewed leave requests cannot be deleted")
+    await db.delete(row); await db.commit()

@@ -33,6 +33,15 @@ class InvoiceCreate(BaseModel):
     line_items: List[InvoiceLineCreate] = Field(min_length=1)
 
 
+class ExpenseUpdate(BaseModel):
+    vendor: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    category: Optional[str] = None
+    description: Optional[str] = Field(default=None, min_length=1)
+    amount_cents: Optional[int] = Field(default=None, gt=0)
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    expense_date: Optional[date] = None
+
+
 class InvoiceRead(ReadModel):
     id: str
     org_id: str

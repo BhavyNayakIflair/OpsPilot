@@ -66,6 +66,24 @@ async def create_rate_card(data: RateCardCreate, org: Organization = Depends(get
     row = RateCard(org_id=org.id, **data.model_dump()); db.add(row); await db.commit(); await db.refresh(row); return row
 
 
+@router.put("/rate-cards/{rate_card_id}")
+async def update_rate_card(rate_card_id: str, data: RateCardCreate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, RateCard, rate_card_id, org.id)
+    if await db.scalar(select(Quote.id).where(Quote.org_id == org.id, Quote.rate_card_id == row.id).limit(1)):
+        # Keep historical quote pricing and its source rate card immutable.
+        raise HTTPException(status_code=409, detail="Rate cards linked to quotes cannot be changed")
+    for key, value in data.model_dump().items(): setattr(row, key, value)
+    await db.commit(); await db.refresh(row); return row
+
+
+@router.delete("/rate-cards/{rate_card_id}", status_code=204)
+async def delete_rate_card(rate_card_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, RateCard, rate_card_id, org.id)
+    if await db.scalar(select(Quote.id).where(Quote.org_id == org.id, Quote.rate_card_id == row.id).limit(1)) or await db.scalar(select(QuoteLineItem.id).where(QuoteLineItem.org_id == org.id, QuoteLineItem.rate_card_id == row.id).limit(1)):
+        raise HTTPException(status_code=409, detail="Rate cards used by quotes cannot be deleted")
+    await db.delete(row); await db.commit()
+
+
 @router.get("")
 async def list_quotes(org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     quotes = (await db.scalars(select(Quote).where(Quote.org_id == org.id).order_by(Quote.created_at.desc()))).all()

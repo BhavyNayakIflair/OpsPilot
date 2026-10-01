@@ -98,8 +98,18 @@ class OllamaProvider(LLMProvider):
         started = time.monotonic()
         status = "success"
         try:
-            payload = self._request("POST", "/api/embed", json={"model": self.embedding_model, "input": texts}).json()
-            vectors = payload.get("embeddings")
+            try:
+                payload = self._request("POST", "/api/embed", json={"model": self.embedding_model, "input": texts}).json()
+                vectors = payload.get("embeddings")
+            except ProviderError as exc:
+                cause = exc.__cause__
+                if not isinstance(cause, httpx.HTTPStatusError) or cause.response.status_code != 404:
+                    raise
+                vectors = [
+                    self._request("POST", "/api/embeddings", json={"model": self.embedding_model, "prompt": text})
+                    .json().get("embedding")
+                    for text in texts
+                ]
             if not isinstance(vectors, list) or len(vectors) != len(texts):
                 raise ProviderError("Ollama returned an unexpected embedding response")
             if any(not isinstance(vector, list) or len(vector) != 768 for vector in vectors):

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Navbar } from './Navbar';
@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 
 export const AppLayout: React.FC = () => {
   const { user, loading } = useAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   if (loading) {
     return (
@@ -23,11 +24,14 @@ export const AppLayout: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 overflow-hidden font-sans">
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <Navbar />
-        <main className="flex-1 overflow-y-auto p-6">
+    <div className="flex h-screen overflow-hidden bg-[var(--canvas)] font-sans">
+      {sidebarOpen && <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-slate-950/40 md:hidden" onClick={() => setSidebarOpen(false)} />}
+      <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-40 transition-transform duration-200 md:static md:translate-x-0`}>
+        <Sidebar onNavigate={() => setSidebarOpen(false)} />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <Navbar onMenu={() => setSidebarOpen((open) => !open)} />
+        <main className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
           <Outlet />
         </main>
       </div>

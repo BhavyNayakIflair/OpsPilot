@@ -24,6 +24,15 @@ class EmployeeRead(EmployeeCreate, ReadModel):
     updated_at: datetime
 
 
+class EmployeeUpdate(BaseModel):
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    title: Optional[str] = None
+    email: Optional[str] = None
+    billing_rate_cents: Optional[int] = Field(default=None, ge=0)
+    cost_rate_cents: Optional[int] = Field(default=None, ge=0)
+    is_active: Optional[bool] = None
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     lead_id: Optional[str] = None
@@ -41,6 +50,18 @@ class ProjectRead(ProjectCreate, ReadModel):
     org_id: str
     created_at: datetime
     updated_at: datetime
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    lead_id: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    budget_minutes: Optional[int] = Field(default=None, ge=0)
+    budget_amount_cents: Optional[int] = Field(default=None, ge=0)
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class TaskCreate(BaseModel):
@@ -78,6 +99,15 @@ class TimeEntryRead(TimeEntryCreate, ReadModel):
     updated_at: datetime
 
 
+class TimeEntryUpdate(BaseModel):
+    project_id: Optional[str] = None
+    task_id: Optional[str] = None
+    entry_date: Optional[date] = None
+    minutes: Optional[int] = Field(default=None, gt=0, le=1440)
+    description: Optional[str] = Field(default=None, min_length=1)
+    is_billable: Optional[bool] = None
+
+
 class LeaveCreate(BaseModel):
     employee_id: str
     start_date: date
@@ -91,3 +121,9 @@ class LeaveRead(LeaveCreate, ReadModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class LeaveUpdate(BaseModel):
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    reason: Optional[str] = None

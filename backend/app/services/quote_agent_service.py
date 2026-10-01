@@ -190,6 +190,7 @@ def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
         await _set_run(db, state["run_id"], state["org_id"], "paused_for_approval", {
             "lead_id": state["lead_id"], "approval_id": approval.id,
             "flags": state.get("review_flags", []), "assumptions": state.get("assumptions", []),
+            "quote_preview": state.get("quote_payload", {}),
         })
         await _record_step(db, state, "create_approval", "none", started,
                            f"Created approval request: {approval.id}")

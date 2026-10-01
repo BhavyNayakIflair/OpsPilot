@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { apiRequest } from '../../lib/api';
 
 interface NavItem {
   name: string;
@@ -38,15 +39,23 @@ const navItems: NavItem[] = [
   { name: 'Documents & SOWs', path: '/documents', icon: BookOpen },
   { name: 'Odoo Migration', path: '/migration', icon: ArrowLeftRight, badge: 'New' },
   { name: 'Agent Workflows', path: '/workflows', icon: Bot, isAi: true },
-  { name: 'Approvals Inbox', path: '/approvals', icon: CheckCircle2, badge: '3' },
+  { name: 'Approvals Inbox', path: '/approvals', icon: CheckCircle2 },
   { name: 'Settings', path: '/settings', icon: Settings },
 ];
 
-export const Sidebar: React.FC = () => {
+export const Sidebar: React.FC<{ onNavigate?: () => void }> = ({ onNavigate }) => {
   const { user } = useAuth();
+  const [approvalCount, setApprovalCount] = React.useState(0);
+  React.useEffect(() => {
+    let active = true;
+    void apiRequest<{ id: string }[]>('/workflows/approvals').then((items) => {
+      if (active) setApprovalCount(items.length);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   return (
-    <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col h-screen border-r border-slate-800 select-none">
+    <aside className="flex h-screen w-[280px] select-none flex-col border-r border-slate-800 bg-[#111827] text-slate-300 shadow-2xl md:w-[260px]">
       {/* Brand Header */}
       <div className="h-16 flex items-center px-6 gap-3 border-b border-slate-800">
         <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-sky-500/20">
@@ -82,12 +91,12 @@ export const Sidebar: React.FC = () => {
               key={item.path}
               to={item.path}
               className={({ isActive }) =>
-                `flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  isActive
-                    ? 'bg-sky-600/20 text-sky-400 border border-sky-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+                `flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all ${isActive
+                  ? 'bg-sky-600/20 text-sky-400 border border-sky-500/30 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
                 }`
               }
+              onClick={onNavigate}
             >
               <div className="flex items-center gap-3">
                 <Icon className="w-4 h-4 shrink-0" />
@@ -99,7 +108,10 @@ export const Sidebar: React.FC = () => {
                     AI
                   </span>
                 )}
-                {item.badge && (
+                {item.path === '/approvals' && approvalCount > 0 && (
+                  <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{approvalCount}</span>
+                )}
+                {item.badge && item.path !== '/approvals' && (
                   <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-sky-500 text-white font-semibold">
                     {item.badge}
                   </span>

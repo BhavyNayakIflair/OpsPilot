@@ -1,6 +1,7 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from app.core.database import get_db
 from app.core.deps import (
     get_current_user,
@@ -114,3 +115,28 @@ async def invite_or_add_member(
         full_name=member_user.full_name,
         created_at=membership.created_at,
     )
+
+
+@router.delete("/members/{membership_id}", status_code=204)
+async def remove_member(
+    membership_id: str,
+    tenant: Organization = Depends(get_current_tenant),
+    user: User = Depends(get_current_user),
+    _role: Membership = Depends(require_role([RoleType.OWNER])),
+    db: AsyncSession = Depends(get_db),
+):
+    membership = await db.scalar(select(Membership).where(
+        Membership.id == membership_id, Membership.org_id == tenant.id
+    ))
+    if not membership:
+        raise HTTPException(status_code=404, detail="Workspace member not found")
+    if membership.user_id == user.id:
+        raise HTTPException(status_code=409, detail="You cannot remove your own workspace access")
+    if membership.role == RoleType.OWNER.value:
+        owner_count = await db.scalar(select(func.count()).select_from(Membership).where(
+            Membership.org_id == tenant.id, Membership.role == RoleType.OWNER.value
+        ))
+        if owner_count <= 1:
+            raise HTTPException(status_code=409, detail="The workspace must retain at least one owner")
+    await db.delete(membership)
+    await db.commit()

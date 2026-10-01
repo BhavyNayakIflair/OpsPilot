@@ -1,6 +1,6 @@
 import secrets
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_tenant, get_current_user, get_current_membership, require_role
@@ -9,7 +9,7 @@ from app.models.user import User
 from app.models.membership import Membership, RoleType
 from app.models.operations import Project
 from app.models.billing import Invoice, InvoiceLineItem, Payment, Expense
-from app.schemas.billing import InvoiceCreate, PaymentCreate, ExpenseCreate
+from app.schemas.billing import InvoiceCreate, PaymentCreate, ExpenseCreate, ExpenseUpdate
 
 router = APIRouter()
 
@@ -44,6 +44,38 @@ async def create_invoice(data: InvoiceCreate, org: Organization = Depends(get_cu
     for item in data.line_items:
         db.add(InvoiceLineItem(org_id=org.id, invoice_id=invoice.id, **item.model_dump(), amount_cents=item.quantity * item.unit_price_cents))
     await db.commit(); await db.refresh(invoice); return await _invoice_out(db, invoice)
+
+
+@router.put("/invoices/{invoice_id}")
+async def update_draft_invoice(invoice_id: str, data: InvoiceCreate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.FINANCE]))):
+    invoice = await _owned(db, Invoice, invoice_id, org.id)
+    if invoice.status != "draft" or invoice.paid_cents:
+        raise HTTPException(status_code=409, detail="Only unpaid draft invoices can be edited")
+    if data.due_date < data.issue_date: raise HTTPException(status_code=422, detail="Due date must be on or after issue date")
+    if data.project_id: await _owned(db, Project, data.project_id, org.id)
+    subtotal = sum(item.quantity * item.unit_price_cents for item in data.line_items)
+    tax = (subtotal * data.tax_bps + 5000) // 10000
+    invoice.project_id = data.project_id
+    invoice.client_name = data.client_name
+    invoice.currency = data.currency.upper()
+    invoice.subtotal_cents = subtotal
+    invoice.tax_cents = tax
+    invoice.total_cents = subtotal + tax
+    invoice.issue_date = data.issue_date
+    invoice.due_date = data.due_date
+    invoice.notes = data.notes
+    await db.execute(delete(InvoiceLineItem).where(InvoiceLineItem.org_id == org.id, InvoiceLineItem.invoice_id == invoice.id))
+    for item in data.line_items:
+        db.add(InvoiceLineItem(org_id=org.id, invoice_id=invoice.id, **item.model_dump(), amount_cents=item.quantity * item.unit_price_cents))
+    await db.commit(); await db.refresh(invoice); return await _invoice_out(db, invoice)
+
+
+@router.delete("/invoices/{invoice_id}", status_code=204)
+async def delete_draft_invoice(invoice_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.FINANCE]))):
+    invoice = await _owned(db, Invoice, invoice_id, org.id)
+    if invoice.status != "draft" or invoice.paid_cents:
+        raise HTTPException(status_code=409, detail="Only unpaid draft invoices can be deleted")
+    await db.delete(invoice); await db.commit()
 
 
 @router.get("/invoices/{invoice_id}")
@@ -89,6 +121,23 @@ async def list_expenses(org: Organization = Depends(get_current_tenant), user: U
 @router.post("/expenses", status_code=201)
 async def create_expense(data: ExpenseCreate, user: User = Depends(get_current_user), org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     row = Expense(org_id=org.id, submitted_by=user.id, **data.model_dump()); db.add(row); await db.commit(); await db.refresh(row); return row
+
+
+@router.patch("/expenses/{expense_id}")
+async def update_expense(expense_id: str, data: ExpenseUpdate, user: User = Depends(get_current_user), org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, Expense, expense_id, org.id)
+    if row.submitted_by != user.id or row.status != "pending":
+        raise HTTPException(status_code=409, detail="Only your pending expenses can be edited")
+    for key, value in data.model_dump(exclude_unset=True).items(): setattr(row, key, value)
+    await db.commit(); await db.refresh(row); return row
+
+
+@router.delete("/expenses/{expense_id}", status_code=204)
+async def delete_expense(expense_id: str, user: User = Depends(get_current_user), org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+    row = await _owned(db, Expense, expense_id, org.id)
+    if row.submitted_by != user.id or row.status != "pending":
+        raise HTTPException(status_code=409, detail="Only your pending expenses can be deleted")
+    await db.delete(row); await db.commit()
 
 
 @router.patch("/expenses/{expense_id}/review")
