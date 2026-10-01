@@ -1,0 +1,155 @@
+# =========================================================
+# Environment / Secrets
+# =========================================================
+
+.env
+.env.*
+!.env.example
+
+# Credentials / private keys
+*.pem
+*.key
+*.crt
+credentials.json
+*-credentials.json
+service-account*.json
+
+
+# =========================================================
+# Python
+# =========================================================
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checking / linting caches
+.mypy_cache/
+.ruff_cache/
+
+
+# =========================================================
+# Node / React
+# =========================================================
+
+node_modules/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Frontend build output
+dist/
+dist-ssr/
+build/
+.next/
+out/
+
+# Local frontend environment files
+*.local
+
+
+# =========================================================
+# Logs
+# =========================================================
+
+logs/
+*.log
+
+
+# =========================================================
+# Local databases
+# =========================================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# Specifically local development DB
+tmpcheck.db
+
+
+# =========================================================
+# AI / ML generated data
+# =========================================================
+
+# Local model files
+models/
+model_cache/
+
+# Vector stores / indexes
+chroma/
+chroma_db/
+vectorstore/
+vector_store/
+
+*.faiss
+*.index
+
+# Hugging Face / ML caches
+.huggingface/
+.cache/
+
+
+# =========================================================
+# Application generated files
+# =========================================================
+
+uploads/
+uploaded_files/
+generated/
+tmp/
+temp/
+
+
+# =========================================================
+# Jupyter
+# =========================================================
+
+.ipynb_checkpoints/
+
+
+# =========================================================
+# OS
+# =========================================================
+
+.DS_Store
+Thumbs.db
+
+
+# =========================================================
+# IDE / Editor
+# =========================================================
+
+.vscode/*
+!.vscode/extensions.json
+
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
