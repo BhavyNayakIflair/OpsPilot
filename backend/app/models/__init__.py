@@ -8,7 +8,8 @@ from app.models.crm import Company, Contact, Lead, PipelineStage, Activity
 from app.models.quotes import RateCard, Quote, QuoteLineItem
 from app.models.operations import Employee, Project, ProjectTask, TimeEntry, LeaveRequest
 from app.models.billing import Invoice, InvoiceLineItem, Payment, Expense
-from app.models.content import MigrationJob, KnowledgeDocument, WorkflowRun, DocumentChunk
+from app.models.content import (MigrationJob, KnowledgeDocument, WorkflowRun, DocumentChunk,
+                                WorkflowStep, QuoteAgentApproval)
 from app.models.model_request import ModelRequest
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "RateCard", "Quote", "QuoteLineItem",
     "Employee", "Project", "ProjectTask", "TimeEntry", "LeaveRequest",
     "Invoice", "InvoiceLineItem", "Payment", "Expense",
-    "MigrationJob", "KnowledgeDocument", "WorkflowRun", "DocumentChunk",
+    "MigrationJob", "KnowledgeDocument", "WorkflowRun", "DocumentChunk", "WorkflowStep",
+    "QuoteAgentApproval",
     "ModelRequest",
 ]

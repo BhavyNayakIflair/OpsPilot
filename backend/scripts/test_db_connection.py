@@ -13,7 +13,7 @@ from app.core.database import engine, Base
 from app.models import Organization, User, Membership, AuditLog, Subscription, UsageCounter
 
 
-async def test_connection():
+async def check_connection():
     print(f"Connecting to database via: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else settings.DATABASE_URL}")
     try:
         async with engine.begin() as conn:
@@ -42,4 +42,4 @@ async def test_connection():
 
 
 if __name__ == "__main__":
-    asyncio.run(test_connection())
+    asyncio.run(check_connection())

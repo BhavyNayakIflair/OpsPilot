@@ -4,10 +4,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_tenant
+from app.gateway.base import LLMProvider, ProviderError
+from app.gateway.factory import get_llm_provider
 from app.models.organization import Organization
 from app.models.crm import Lead
 from app.models.quotes import RateCard, Quote, QuoteLineItem
-from app.schemas.quotes import RateCardCreate, QuoteCreate
+from app.schemas.quotes import QuoteCreate, QuoteDraftRequest, RateCardCreate
+from app.services.quote_draft_service import generate_quote_draft
+from app.services.quote_write_service import persist_quote
 
 router = APIRouter()
 
@@ -30,6 +34,28 @@ def _totals(lines, discount_bps, tax_bps):
     return subtotal, total
 
 
+@router.post("/draft", status_code=201)
+async def draft_quote(data: QuoteDraftRequest, org: Organization = Depends(get_current_tenant),
+                      db: AsyncSession = Depends(get_db), provider: LLMProvider = Depends(get_llm_provider)):
+    lead = await _owned(db, Lead, data.lead_id, org.id)
+    if lead.status in ("won", "lost"):
+        raise HTTPException(status_code=409, detail="Quotes can only be drafted for open leads")
+    if data.rate_card_id:
+        rate_card = await _owned(db, RateCard, data.rate_card_id, org.id)
+    else:
+        rate_card = await db.scalar(select(RateCard).where(
+            RateCard.org_id == org.id, RateCard.currency == lead.currency.upper()
+        ).order_by(RateCard.name))
+    if rate_card and rate_card.currency.upper() != lead.currency.upper():
+        raise HTTPException(status_code=422, detail="Rate card currency must match the lead currency")
+    try:
+        payload, assumptions, _evidence = await generate_quote_draft(db, org, lead, rate_card, provider)
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=f"AI quote draft could not be validated: {exc}") from exc
+    quote = await persist_quote(db, org, payload, status="draft")
+    return {"quote": quote, "assumptions": assumptions}
+
+
 @router.get("/rate-cards")
 async def list_rate_cards(org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     return (await db.scalars(select(RateCard).where(RateCard.org_id == org.id).order_by(RateCard.name))).all()
@@ -48,24 +74,21 @@ async def list_quotes(org: Organization = Depends(get_current_tenant), db: Async
 
 @router.post("", status_code=201)
 async def create_quote(data: QuoteCreate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
-    if data.rate_card_id:
-        card = await _owned(db, RateCard, data.rate_card_id, org.id)
-        if card.currency != data.currency: raise HTTPException(status_code=422, detail="Quote currency must match its rate card")
-    if data.lead_id: await _owned(db, Lead, data.lead_id, org.id)
-    subtotal, total = _totals(data.line_items, data.discount_bps, data.tax_bps)
-    quote = Quote(org_id=org.id, rate_card_id=data.rate_card_id, lead_id=data.lead_id, title=data.title,
-        currency=data.currency.upper(), discount_bps=data.discount_bps, tax_bps=data.tax_bps,
-        subtotal_cents=subtotal, total_cents=total, terms=data.terms)
-    db.add(quote); await db.flush()
-    for item in data.line_items:
-        if item.rate_card_id: await _owned(db, RateCard, item.rate_card_id, org.id)
-        db.add(QuoteLineItem(org_id=org.id, quote_id=quote.id, **item.model_dump(), amount_cents=item.quantity * item.unit_price_cents))
-    await db.commit(); await db.refresh(quote); return await _quote_out(db, quote)
+    return await persist_quote(db, org, data)
 
 
 @router.get("/{quote_id}")
 async def get_quote(quote_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     return await _quote_out(db, await _owned(db, Quote, quote_id, org.id))
+
+
+@router.put("/{quote_id}")
+async def update_quote(quote_id: str, data: QuoteCreate, org: Organization = Depends(get_current_tenant),
+                       db: AsyncSession = Depends(get_db)):
+    quote = await _owned(db, Quote, quote_id, org.id)
+    if quote.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft quotes can be edited")
+    return await persist_quote(db, org, data, existing=quote)
 
 
 @router.delete("/{quote_id}", status_code=204)

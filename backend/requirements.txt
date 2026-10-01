@@ -18,3 +18,6 @@ joblib==1.6.0
 numpy==2.5.3
 pytest==9.1.1
 pytest-asyncio==1.4.0
+langgraph==1.2.12
+langgraph-checkpoint-postgres==3.1.2
+psycopg[binary]>=3.2.0

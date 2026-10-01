@@ -66,3 +66,23 @@ class QuoteRead(ReadModel):
     created_at: datetime
     updated_at: datetime
     line_items: List[QuoteLineItemRead] = []
+
+
+class QuoteDraftRequest(BaseModel):
+    lead_id: str
+    rate_card_id: Optional[str] = None
+
+
+class AIDraftLineItem(BaseModel):
+    description: str = Field(min_length=1, max_length=500)
+    quantity: int = Field(gt=0)
+    unit_price_cents: int = Field(ge=0)
+
+
+class AIDraftResponse(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    currency: str = Field(min_length=3, max_length=3)
+    line_items: List[AIDraftLineItem] = Field(min_length=1, max_length=30)
+    total_cents: int = Field(ge=0)
+    terms: Optional[str] = None
+    assumptions: List[str] = Field(default_factory=list)

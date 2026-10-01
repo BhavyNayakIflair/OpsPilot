@@ -11,3 +11,8 @@ def get_provider(name: str | None = None) -> LLMProvider:
         from app.gateway.groq_provider import GroqProvider
         return GroqProvider()
     raise ProviderError(f"Unsupported LLM_PROVIDER '{provider_name}'. Supported providers: ollama, groq")
+
+
+def get_llm_provider() -> LLMProvider:
+    """FastAPI dependency kept separate so routes can override it with a FakeProvider."""
+    return get_provider()

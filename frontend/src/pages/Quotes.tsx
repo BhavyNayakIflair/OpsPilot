@@ -5,6 +5,7 @@ import { apiRequest } from '../lib/api';
 type Lead = { id: string; title: string };
 type RateCard = { id: string; name: string; currency: string; default_rate_cents: number };
 type Quote = { id: string; title: string; status: string; currency: string; subtotal_cents: number; total_cents: number; accept_token: string; line_items: { id: string; description: string; quantity: number; amount_cents: number }[] };
+type QuoteDraft = { quote: { id: string; title: string; lead_id: string; rate_card_id?: string; currency: string; discount_bps: number; tax_bps: number; terms?: string | null; line_items: { description: string; quantity: number; unit_price_cents: number }[] }; assumptions: string[] };
 const field = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-500';
 const action = 'rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50';
 
@@ -23,6 +24,9 @@ export function Quotes() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [pdfUrl, setPdfUrl] = useState('');
+  const [editingId, setEditingId] = useState('');
+  const [assumptions, setAssumptions] = useState<string[]>([]);
+  const [aiBusy, setAiBusy] = useState(false);
   const load = useCallback(async () => {
     setError('');
     try {
@@ -36,10 +40,24 @@ export function Quotes() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true); setError('');
     try {
-      await apiRequest('/quotes', { method: 'POST', body: JSON.stringify({ title, lead_id: leadId || null, rate_card_id: cardId || null, currency, discount_bps: Math.round(Number(discount) * 100), tax_bps: Math.round(Number(tax) * 100), terms: terms || null, line_items: lineItems.map((line) => ({ description: line.description, quantity: Number(line.quantity), unit_price_cents: Math.round(Number(line.price) * 100), rate_card_id: cardId || null })) }) });
-      setTitle(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTerms(''); await load();
+      await apiRequest(editingId ? `/quotes/${editingId}` : '/quotes', { method: editingId ? 'PUT' : 'POST', body: JSON.stringify({ title, lead_id: leadId || null, rate_card_id: cardId || null, currency, discount_bps: Math.round(Number(discount) * 100), tax_bps: Math.round(Number(tax) * 100), terms: terms || null, line_items: lineItems.map((line) => ({ description: line.description, quantity: Number(line.quantity), unit_price_cents: Math.round(Number(line.price) * 100), rate_card_id: cardId || null })) }) });
+      resetEditor(); await load();
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not create quote'); }
     finally { setBusy(false); }
+  };
+  const resetEditor = () => { setEditingId(''); setAssumptions([]); setTitle(''); setLeadId(''); setCardId(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTerms(''); setDiscount('0'); setTax('0'); };
+  const draftWithAI = async () => {
+    if (!leadId) { setError('Choose a lead before drafting a quote with AI.'); return; }
+    setAiBusy(true); setError('');
+    try {
+      const result = await apiRequest<QuoteDraft>('/quotes/draft', { method: 'POST', body: JSON.stringify({ lead_id: leadId, rate_card_id: cardId || null }) });
+      const quote = result.quote;
+      setEditingId(quote.id); setTitle(quote.title); setLeadId(quote.lead_id); setCardId(quote.rate_card_id || ''); setCurrency(quote.currency);
+      setDiscount(String(quote.discount_bps / 100)); setTax(String(quote.tax_bps / 100)); setTerms(quote.terms || '');
+      setLineItems(quote.line_items.map((line) => ({ description: line.description, quantity: String(line.quantity), price: (line.unit_price_cents / 100).toFixed(2) })));
+      setAssumptions(result.assumptions); await load();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not draft quote with AI'); }
+    finally { setAiBusy(false); }
   };
   const showPdf = async (id: string) => {
     setError('');
@@ -59,7 +77,7 @@ export function Quotes() {
   return <div className="mx-auto max-w-7xl space-y-6">
     <header><h1 className="text-2xl font-bold text-slate-900">Quotes & Proposals</h1><p className="mt-1 text-sm text-slate-500">Build priced proposals from your pipeline, preview a PDF, and share an acceptance link.</p></header>
     {error && <div role="alert" className="break-all rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">{error}</div>}
-    <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="mb-4 text-base font-bold text-slate-900">New quote</h2><form onSubmit={(e) => void submit(e)} className="grid gap-3 md:grid-cols-2">
+    <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="mb-4 text-base font-bold text-slate-900">{editingId ? 'Review draft quote' : 'New quote'}</h2>{assumptions.length > 0 && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="font-semibold">AI assumptions — review before saving</p><ul className="mt-1 list-disc pl-5">{assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}<form onSubmit={(e) => void submit(e)} className="grid gap-3 md:grid-cols-2">
       <input required className={field} placeholder="Proposal title" value={title} onChange={(e) => setTitle(e.target.value)} />
       <select className={field} value={leadId} onChange={(e) => setLeadId(e.target.value)}><option value="">No linked lead</option>{leads.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}</select>
       <select className={field} value={cardId} onChange={(e) => chooseCard(e.target.value)}><option value="">No rate card</option>{cards.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.currency}</option>)}</select>
@@ -68,7 +86,7 @@ export function Quotes() {
       <label className="text-xs text-slate-500">Discount (%)<input min="0" max="100" step="0.01" type="number" className={`${field} mt-1`} value={discount} onChange={(e) => setDiscount(e.target.value)} /></label>
       <label className="text-xs text-slate-500">Tax (%)<input min="0" max="100" step="0.01" type="number" className={`${field} mt-1`} value={tax} onChange={(e) => setTax(e.target.value)} /></label>
       <textarea className={`${field} md:col-span-2`} rows={2} placeholder="Terms and notes" value={terms} onChange={(e) => setTerms(e.target.value)} />
-      <div className="flex items-center justify-between md:col-span-2"><span className="text-sm text-slate-500">Currency amounts are saved in minor units.</span><button disabled={busy} className={action}>{busy ? 'Saving…' : 'Create quote'}</button></div>
+      <div className="flex flex-wrap items-center justify-between gap-2 md:col-span-2"><span className="text-sm text-slate-500">Currency amounts are saved in minor units.</span><div className="flex gap-2"><button type="button" disabled={aiBusy || busy || !leadId} onClick={() => void draftWithAI()} className={action}>{aiBusy ? 'Drafting…' : 'Draft with AI'}</button>{editingId && <button type="button" disabled={busy} onClick={resetEditor} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel review</button>}<button disabled={busy} className={action}>{busy ? 'Saving…' : editingId ? 'Save reviewed draft' : 'Create quote'}</button></div></div>
     </form></section>
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="border-b border-slate-100 px-5 py-4"><h2 className="font-bold text-slate-900">Quotes</h2></div><div className="divide-y divide-slate-100">{quotes.map((quote) => <article key={quote.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-semibold text-slate-900">{quote.title}</h3><p className="mt-1 text-xs text-slate-500">{quote.line_items.map((line) => `${line.description} · ${quote.currency} ${(line.amount_cents / 100).toFixed(2)}`).join(' | ')}</p></div><div className="flex flex-wrap items-center gap-3"><span className="font-bold text-slate-900">{quote.currency} {(quote.total_cents / 100).toFixed(2)}</span><span className={`rounded-full px-2 py-1 text-xs font-semibold ${quote.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{quote.status}</span><button className="text-sm font-semibold text-sky-700 hover:underline" onClick={() => void showPdf(quote.id)}>Preview PDF</button><button className="text-sm font-semibold text-sky-700 hover:underline" onClick={() => void copyAcceptance(quote)}>Copy accept link</button>{quote.status !== 'accepted' && <button className="text-sm font-semibold text-rose-600 hover:underline" onClick={() => void remove(quote.id)}>Delete</button>}</div></article>)}{!quotes.length && <p className="p-8 text-center text-sm text-slate-500">No quotes yet. Create your first proposal above.</p>}</div></section>
     {pdfUrl && <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="flex items-center justify-between px-4 py-3"><h2 className="font-semibold">PDF preview</h2><button className="text-sm text-slate-500 hover:text-slate-900" onClick={() => { URL.revokeObjectURL(pdfUrl); setPdfUrl(''); }}>Close preview</button></div><iframe title="Quote PDF preview" src={pdfUrl} className="h-[640px] w-full border-t border-slate-100" /></section>}

@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import Column, String, ForeignKey, Text, JSON, Index, Integer
+from sqlalchemy import Column, String, ForeignKey, Text, JSON, Index, Integer, Float
 from sqlalchemy.types import TypeDecorator
 from app.core.database import Base
 from app.models.base import TimestampMixin, generate_uuid
@@ -65,3 +65,28 @@ class WorkflowRun(Base, TimestampMixin):
     status = Column(String(30), default="completed", nullable=False)
     input_data = Column(JSON, default=dict, nullable=False)
     result_data = Column(JSON, default=dict, nullable=False)
+
+
+class WorkflowStep(Base, TimestampMixin):
+    __tablename__ = "workflow_steps"
+    __table_args__ = (Index("ix_workflow_steps_run_id", "workflow_run_id"),)
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    org_id = Column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    workflow_run_id = Column(String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False)
+    node_name = Column(String(80), nullable=False)
+    model = Column(String(120), nullable=False, default="none")
+    latency_ms = Column(Float, nullable=False, default=0)
+    status = Column(String(30), nullable=False)
+    result_summary = Column(Text, nullable=False)
+
+
+class QuoteAgentApproval(Base, TimestampMixin):
+    __tablename__ = "quote_agent_approvals"
+    __table_args__ = (Index("ix_quote_agent_approvals_org_status", "org_id", "status"),)
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    org_id = Column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    workflow_run_id = Column(String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, unique=True)
+    status = Column(String(30), nullable=False, default="pending")
+    reason = Column(Text, nullable=False)
