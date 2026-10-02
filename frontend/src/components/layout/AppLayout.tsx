@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Navbar } from './Navbar';
 import { useAuth } from '../../context/AuthContext';
@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 export const AppLayout: React.FC = () => {
   const { user, loading } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -32,7 +33,9 @@ export const AppLayout: React.FC = () => {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Navbar onMenu={() => setSidebarOpen((open) => !open)} />
         <main className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
-          <Outlet />
+          <div key={location.pathname} className="page-enter">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>
