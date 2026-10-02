@@ -5,7 +5,7 @@ import { apiRequest } from '../lib/api';
 type Lead = { id: string; title: string };
 type RateCard = { id: string; name: string; currency: string; default_rate_cents: number };
 type Quote = { id: string; title: string; status: string; currency: string; subtotal_cents: number; total_cents: number; accept_token: string; line_items: { id: string; description: string; quantity: number; amount_cents: number }[] };
-type QuoteDraft = { quote: { id: string; title: string; lead_id: string; rate_card_id?: string; currency: string; discount_bps: number; tax_bps: number; terms?: string | null; line_items: { description: string; quantity: number; unit_price_cents: number }[] }; assumptions: string[] };
+type QuoteDraft = { quote: { id: string; title: string; description?: string | null; lead_id: string; rate_card_id?: string; currency: string; discount_bps: number; tax_bps: number; terms?: string | null; line_items: { description: string; quantity: number; unit_price_cents: number }[] }; assumptions: string[] };
 type QuoteAgentRun = { id: string; status: string; result_data: { quote_id?: string; flags?: string[]; error?: string }; steps: { node_name: string; model: string; latency_ms: number; result_summary: string }[] };
 const field = 'field-control';
 const action = 'primary-button';
@@ -16,6 +16,7 @@ export function Quotes() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [cards, setCards] = useState<RateCard[]>([]);
   const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [leadId, setLeadId] = useState('');
   const [cardId, setCardId] = useState('');
   const [lineItems, setLineItems] = useState([{ description: '', quantity: '1', price: '' }]);
@@ -44,19 +45,19 @@ export function Quotes() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true); setError('');
     try {
-      await apiRequest(editingId ? `/quotes/${editingId}` : '/quotes', { method: editingId ? 'PUT' : 'POST', body: JSON.stringify({ title, lead_id: leadId || null, rate_card_id: cardId || null, currency, discount_bps: Math.round(Number(discount) * 100), tax_bps: Math.round(Number(tax) * 100), terms: terms || null, line_items: lineItems.map((line) => ({ description: line.description, quantity: Number(line.quantity), unit_price_cents: Math.round(Number(line.price) * 100), rate_card_id: cardId || null })) }) });
+      await apiRequest(editingId ? `/quotes/${editingId}` : '/quotes', { method: editingId ? 'PUT' : 'POST', body: JSON.stringify({ title, description: description || null, lead_id: leadId || null, rate_card_id: cardId || null, currency, discount_bps: Math.round(Number(discount) * 100), tax_bps: Math.round(Number(tax) * 100), terms: terms || null, line_items: lineItems.map((line) => ({ description: line.description, quantity: Number(line.quantity), unit_price_cents: Math.round(Number(line.price) * 100), rate_card_id: cardId || null })) }) });
       resetEditor(); await load();
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not create quote'); }
     finally { setBusy(false); }
   };
-  const resetEditor = () => { setEditingId(''); setAssumptions([]); setTitle(''); setLeadId(''); setCardId(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTerms(''); setDiscount('0'); setTax('0'); };
+  const resetEditor = () => { setEditingId(''); setAssumptions([]); setTitle(''); setDescription(''); setLeadId(''); setCardId(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTerms(''); setDiscount('0'); setTax('0'); };
   const draftWithAI = async () => {
     if (!leadId) { setError('Choose a lead before drafting a quote with AI.'); return; }
     setAiBusy(true); setError('');
     try {
-      const result = await apiRequest<QuoteDraft>('/quotes/draft', { method: 'POST', body: JSON.stringify({ lead_id: leadId, rate_card_id: cardId || null }) });
+      const result = await apiRequest<QuoteDraft>('/quotes/draft', { method: 'POST', body: JSON.stringify({ lead_id: leadId, rate_card_id: cardId || null, title: title || null, description: description || null, currency, discount_bps: Math.round(Number(discount) * 100), tax_bps: Math.round(Number(tax) * 100), terms: terms || null, line_items: lineItems.filter((line) => line.description.trim()).map((line) => ({ description: line.description, quantity: Number(line.quantity), unit_price_cents: line.price ? Math.round(Number(line.price) * 100) : null })) }) });
       const quote = result.quote;
-      setEditingId(quote.id); setTitle(quote.title); setLeadId(quote.lead_id); setCardId(quote.rate_card_id || ''); setCurrency(quote.currency);
+      setEditingId(quote.id); setTitle(quote.title); setDescription(quote.description || ''); setLeadId(quote.lead_id); setCardId(quote.rate_card_id || ''); setCurrency(quote.currency);
       setDiscount(String(quote.discount_bps / 100)); setTax(String(quote.tax_bps / 100)); setTerms(quote.terms || '');
       setLineItems(quote.line_items.map((line) => ({ description: line.description, quantity: String(line.quantity), price: (line.unit_price_cents / 100).toFixed(2) })));
       setAssumptions(result.assumptions); await load();
@@ -68,7 +69,7 @@ export function Quotes() {
     setAgentBusy(true); setError(''); setAgentStatus('');
     try {
       const run = await apiRequest<QuoteAgentRun>('/workflows/quote-agent/run', {
-        method: 'POST', body: JSON.stringify({ lead_id: leadId, rate_card_id: cardId || null }),
+        method: 'POST', body: JSON.stringify({ lead_id: leadId, rate_card_id: cardId || null, title: title || null, description: description || null, currency, discount_bps: Math.round(Number(discount) * 100), tax_bps: Math.round(Number(tax) * 100), terms: terms || null, line_items: lineItems.filter((line) => line.description.trim()).map((line) => ({ description: line.description, quantity: Number(line.quantity), unit_price_cents: line.price ? Math.round(Number(line.price) * 100) : null })) }),
       });
       if (run.status === 'completed') {
         setAgentStatus(`Agent completed its review and saved a draft quote (${run.steps.length} steps).`);
@@ -99,7 +100,7 @@ export function Quotes() {
     setError('');
     try {
       const quote = await apiRequest<QuoteDraft['quote']>(`/quotes/${id}`);
-      setEditingId(id); setTitle(quote.title); setLeadId(quote.lead_id || ''); setCardId(quote.rate_card_id || '');
+      setEditingId(id); setTitle(quote.title); setDescription(quote.description || ''); setLeadId(quote.lead_id || ''); setCardId(quote.rate_card_id || '');
       setCurrency(quote.currency); setDiscount(String(quote.discount_bps / 100)); setTax(String(quote.tax_bps / 100));
       setTerms(quote.terms || ''); setAssumptions([]);
       setLineItems(quote.line_items.map((line) => ({ description: line.description, quantity: String(line.quantity), price: (line.unit_price_cents / 100).toFixed(2) })));
@@ -112,6 +113,7 @@ export function Quotes() {
     {error && <div role="alert" className="break-all rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">{error}</div>}
     <section className="panel p-5 sm:p-6"><div className="mb-5 flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Quote editor</p><h2 className="mt-1 text-lg font-bold text-slate-900">{editingId ? 'Review AI draft' : 'Create a quote'}</h2><p className="mt-1 text-sm text-slate-500">Enter the proposal details and line items. Prices are entered per unit.</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Draft</span></div>{assumptions.length > 0 && <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="font-semibold">AI assumptions — review before saving</p><ul className="mt-1 list-disc pl-5">{assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}<form onSubmit={(e) => void submit(e)} className="grid gap-4 md:grid-cols-2">
       <label className="text-xs font-semibold text-slate-600">Proposal title<input required className={`${field} mt-1.5`} placeholder="e.g. Website implementation" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+      <label className="text-xs font-semibold text-slate-600 md:col-span-2">Proposal description<textarea className={`${field} mt-1.5`} rows={2} placeholder="Describe the requested outcome and scope" value={description} onChange={(e) => setDescription(e.target.value)} /></label>
       <label className="text-xs font-semibold text-slate-600">Link to lead<select className={`${field} mt-1.5`} value={leadId} onChange={(e) => setLeadId(e.target.value)}><option value="">Choose a lead (optional)</option>{leads.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}</select></label>
       <label className="text-xs font-semibold text-slate-600">Rate card<select className={`${field} mt-1.5`} value={cardId} onChange={(e) => chooseCard(e.target.value)}><option value="">No rate card</option>{cards.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.currency}</option>)}</select></label>
       <label className="text-xs font-semibold text-slate-600">Currency<select className={`${field} mt-1.5`} value={currency} onChange={(e) => setCurrency(e.target.value)}><option>USD</option><option>EUR</option><option>INR</option><option>GBP</option></select></label>

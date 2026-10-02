@@ -46,12 +46,16 @@ async def draft_quote(data: QuoteDraftRequest, org: Organization = Depends(get_c
         rate_card = await db.scalar(select(RateCard).where(
             RateCard.org_id == org.id, RateCard.currency == lead.currency.upper()
         ).order_by(RateCard.name))
-    if rate_card and rate_card.currency.upper() != lead.currency.upper():
-        raise HTTPException(status_code=422, detail="Rate card currency must match the lead currency")
+    currency = data.currency.upper() if data.currency else (rate_card.currency.upper() if rate_card else lead.currency.upper())
+    if rate_card and currency != rate_card.currency.upper():
+        raise HTTPException(status_code=422, detail="Quote currency must match its rate card")
     try:
-        payload, assumptions, _evidence = await generate_quote_draft(db, org, lead, rate_card, provider)
+        payload, assumptions, _evidence = await generate_quote_draft(
+            db, org, lead, rate_card, provider,
+            request={**data.model_dump(exclude={"lead_id", "rate_card_id"}), "currency": currency}
+        )
     except ProviderError as exc:
-        raise HTTPException(status_code=502, detail=f"AI quote draft could not be validated: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"AI quote draft failed: {exc}") from exc
     quote = await persist_quote(db, org, payload, status="draft")
     return {"quote": quote, "assumptions": assumptions}
 
@@ -85,7 +89,7 @@ async def delete_rate_card(rate_card_id: str, org: Organization = Depends(get_cu
 
 
 @router.get("")
-async def list_quotes(org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+async def list_quotes(org: Organization = Depends       (get_current_tenant), db: AsyncSession = Depends(get_db)):
     quotes = (await db.scalars(select(Quote).where(Quote.org_id == org.id).order_by(Quote.created_at.desc()))).all()
     return [await _quote_out(db, quote) for quote in quotes]
 

@@ -30,6 +30,7 @@ async def persist_quote(db: AsyncSession, org: Organization, data: QuoteCreate,
     quote.rate_card_id = data.rate_card_id
     quote.lead_id = data.lead_id
     quote.title = data.title
+    quote.description = data.description
     quote.currency = data.currency.upper()
     quote.discount_bps = data.discount_bps
     quote.tax_bps = data.tax_bps

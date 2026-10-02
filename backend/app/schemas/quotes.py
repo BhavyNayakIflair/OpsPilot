@@ -39,6 +39,7 @@ class QuoteLineItemRead(QuoteLineItemCreate, ReadModel):
 
 class QuoteCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = None
     rate_card_id: Optional[str] = None
     lead_id: Optional[str] = None
     currency: str = Field(default="USD", min_length=3, max_length=3)
@@ -54,6 +55,7 @@ class QuoteRead(ReadModel):
     rate_card_id: Optional[str]
     lead_id: Optional[str]
     title: str
+    description: Optional[str]
     status: str
     currency: str
     discount_bps: int
@@ -68,9 +70,22 @@ class QuoteRead(ReadModel):
     line_items: List[QuoteLineItemRead] = []
 
 
+class QuoteDraftLineItem(BaseModel):
+    description: str = Field(min_length=1, max_length=500)
+    quantity: int = Field(default=1, gt=0)
+    unit_price_cents: Optional[int] = Field(default=None, ge=0)
+
+
 class QuoteDraftRequest(BaseModel):
     lead_id: str
     rate_card_id: Optional[str] = None
+    title: Optional[str] = Field(default=None, max_length=255)
+    description: Optional[str] = None
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    discount_bps: int = Field(default=0, ge=0, le=10000)
+    tax_bps: int = Field(default=0, ge=0, le=10000)
+    terms: Optional[str] = None
+    line_items: List[QuoteDraftLineItem] = Field(default_factory=list, max_length=30)
 
 
 class AIDraftLineItem(BaseModel):

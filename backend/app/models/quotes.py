@@ -20,6 +20,7 @@ class Quote(Base, TimestampMixin):
     rate_card_id = Column(String(36), ForeignKey("rate_cards.id", ondelete="SET NULL"), index=True)
     lead_id = Column(String(36), ForeignKey("leads.id", ondelete="SET NULL"), index=True)
     title = Column(String(255), nullable=False)
+    description = Column(Text)
     status = Column(String(30), default="draft", nullable=False)
     currency = Column(String(3), default="USD", nullable=False)
     discount_bps = Column(Integer, default=0, nullable=False)

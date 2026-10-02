@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     OLLAMA_FAST_MODEL: str = "qwen2.5:3b-instruct"
     OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text"
     OLLAMA_TIMEOUT_SECONDS: float = 120.0
+    OLLAMA_QUOTE_TIMEOUT_SECONDS: float = 300.0
     OPENAI_API_KEY: str = ""
     DEFAULT_FAST_MODEL: str = "qwen2.5:3b-instruct"
     DEFAULT_REASONING_MODEL: str = "qwen3:4b"

@@ -26,6 +26,7 @@ class QuoteAgentState(TypedDict, total=False):
     user_id: str
     lead_id: str
     rate_card_id: str | None
+    quote_request: dict[str, Any]
     request_text: str
     understanding: dict[str, Any]
     retrieval: dict[str, Any]
@@ -107,9 +108,12 @@ def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
             f"Lead title: {lead.title}\nLead notes: {lead.notes or ''}\n"
             f"Lead value cents: {lead.value_cents}; currency: {lead.currency}"
         )
-        response = await asyncio.to_thread(
-            provider.generate, prompt, "Extract facts for a quote workflow; do not invent requirements.",
-            0.2, RequestUnderstanding, fast=True, task_type="quote_understand", org_id=state["org_id"],
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                provider.generate, prompt, "Extract facts for a quote workflow; do not invent requirements.",
+                0.2, RequestUnderstanding, fast=True, task_type="quote_understand", org_id=state["org_id"],
+            ),
+            timeout=settings.OLLAMA_TIMEOUT_SECONDS,
         )
         brief = response if isinstance(response, RequestUnderstanding) else RequestUnderstanding.model_validate(response)
         await _record_step(db, state, "understand_request", _model_name(provider, fast=True), started,
@@ -138,7 +142,8 @@ def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
         lead, card = await _lead_and_rate_card(db, state)
         org = await db.scalar(select(Organization).where(Organization.id == state["org_id"]))
         payload, assumptions, _evidence = await generate_quote_draft(
-            db, org, lead, card, provider, retrieved_context=state.get("retrieval", {})
+            db, org, lead, card, provider, retrieved_context=state.get("retrieval", {}),
+            request=state.get("quote_request", {})
         )
         await _record_step(db, state, "draft_quote", _model_name(provider), started,
                            f"Generated {len(payload.line_items)} priced lines")
@@ -165,9 +170,12 @@ def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
             f"line_items={payload.line_items}"
         )
         try:
-            review = await asyncio.to_thread(
-                provider.generate, prompt, "Review quote math and pricing; be conservative.", 0.1,
-                QuoteSelfReview, fast=True, task_type="quote_self_review", org_id=state["org_id"],
+            review = await asyncio.wait_for(
+                asyncio.to_thread(
+                    provider.generate, prompt, "Review quote math and pricing; be conservative.", 0.1,
+                    QuoteSelfReview, fast=True, task_type="quote_self_review", org_id=state["org_id"],
+                ),
+                timeout=settings.OLLAMA_TIMEOUT_SECONDS,
             )
             if not isinstance(review, QuoteSelfReview):
                 review = QuoteSelfReview.model_validate(review)

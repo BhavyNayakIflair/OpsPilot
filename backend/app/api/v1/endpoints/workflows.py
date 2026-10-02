@@ -1,6 +1,6 @@
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -15,6 +15,7 @@ from app.models.operations import Project, TimeEntry
 from app.models.billing import Invoice, Expense
 from app.models.content import WorkflowRun, WorkflowStep, QuoteAgentApproval
 from app.models.quotes import RateCard
+from app.schemas.quotes import QuoteDraftLineItem
 from app.services.quote_agent_service import execute_quote_agent
 
 router = APIRouter()
@@ -27,6 +28,13 @@ class Decision(BaseModel):
 class QuoteAgentRequest(BaseModel):
     lead_id: str
     rate_card_id: str | None = None
+    title: str | None = None
+    description: str | None = None
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    discount_bps: int = Field(default=0, ge=0, le=10000)
+    tax_bps: int = Field(default=0, ge=0, le=10000)
+    terms: str | None = None
+    line_items: list[QuoteDraftLineItem] = Field(default_factory=list)
 
 
 async def _agent_run_detail(db: AsyncSession, run: WorkflowRun):
@@ -63,12 +71,14 @@ async def run_quote_agent(data: QuoteAgentRequest, user: User = Depends(get_curr
         if card.currency.upper() != lead.currency.upper():
             raise HTTPException(status_code=422, detail="Rate card currency must match the lead currency")
     run = WorkflowRun(org_id=org.id, user_id=user.id, workflow_type="quote_agent", status="running",
-                      input_data={"lead_id": lead.id, "rate_card_id": data.rate_card_id}, result_data={})
+                      input_data={"lead_id": lead.id, "rate_card_id": data.rate_card_id,
+                                  "quote_request": data.model_dump(exclude={"lead_id", "rate_card_id"})}, result_data={})
     db.add(run)
     await db.commit()
     await db.refresh(run)
     state = {"run_id": run.id, "org_id": org.id, "user_id": user.id,
-             "lead_id": lead.id, "rate_card_id": data.rate_card_id}
+             "lead_id": lead.id, "rate_card_id": data.rate_card_id,
+             "quote_request": data.model_dump(exclude={"lead_id", "rate_card_id"})}
     try:
         await execute_quote_agent(db, provider, state)
     except ProviderError as exc:
@@ -136,6 +146,7 @@ async def decide_approval(entity_type: str, entity_id: str, data: Decision, org:
             raise HTTPException(status_code=404, detail="Workflow run not found")
         state = {"run_id": run.id, "org_id": org.id, "user_id": run.user_id or "",
                  "lead_id": run.input_data["lead_id"], "rate_card_id": run.input_data.get("rate_card_id"),
+                 "quote_request": run.input_data.get("quote_request", {}),
                  "approval_id": approval.id}
         await execute_quote_agent(db, provider, state, resume_decision=data.decision)
         await db.refresh(run)
