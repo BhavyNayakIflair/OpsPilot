@@ -7,7 +7,7 @@ from app.core.deps import get_current_tenant
 from app.gateway.base import LLMProvider, ProviderError
 from app.gateway.factory import get_llm_provider
 from app.models.organization import Organization
-from app.models.crm import Lead
+from app.models.crm import Lead, Contact, Company
 from app.models.quotes import RateCard, Quote, QuoteLineItem
 from app.schemas.quotes import QuoteCreate, QuoteDraftRequest, RateCardCreate
 from app.services.quote_draft_service import generate_quote_draft
@@ -130,17 +130,30 @@ async def calculate_quote(data: QuoteCreate):
 async def quote_pdf(quote_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     quote = await _owned(db, Quote, quote_id, org.id)
     lines = (await db.scalars(select(QuoteLineItem).where(QuoteLineItem.quote_id == quote.id, QuoteLineItem.org_id == org.id))).all()
-    # Generate a small standards-compliant one-page PDF without an external runtime dependency.
-    text_lines = [f"Quote: {quote.title}", f"Status: {quote.status}", f"Total: {quote.currency} {quote.total_cents / 100:.2f}"]
-    text_lines += [f"{line.description}  x{line.quantity}  {line.currency if hasattr(line, 'currency') else quote.currency} {line.amount_cents / 100:.2f}" for line in lines]
-    stream = "BT /F1 12 Tf 50 790 Td " + " ".join(f"({s.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')}) Tj 0 -22 Td" for s in text_lines) + " ET"
-    objects = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>", b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", f"<< /Length {len(stream.encode())} >>\nstream\n{stream}\nendstream".encode()]
-    pdf = bytearray(b"%PDF-1.4\n"); offsets = [0]
-    for i, obj in enumerate(objects, 1): offsets.append(len(pdf)); pdf.extend(f"{i} 0 obj\n".encode() + obj + b"\nendobj\n")
-    xref = len(pdf); pdf.extend(f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode())
-    for offset in offsets[1:]: pdf.extend(f"{offset:010d} 00000 n \n".encode())
-    pdf.extend(f"trailer << /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
-    return Response(bytes(pdf), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="quote-{quote.id}.pdf"'})
+
+    # Fetch related Lead → Contact → Company for richer PDF detail.
+    lead_obj = None
+    contact_obj = None
+    company_obj = None
+    if quote.lead_id:
+        lead_obj = await db.scalar(select(Lead).where(Lead.id == quote.lead_id))
+        if lead_obj:
+            if lead_obj.contact_id:
+                contact_obj = await db.scalar(select(Contact).where(Contact.id == lead_obj.contact_id))
+            if lead_obj.company_id:
+                company_obj = await db.scalar(select(Company).where(Company.id == lead_obj.company_id))
+
+    from app.services.pdf_service import generate_quote_pdf
+    pdf_bytes = generate_quote_pdf(
+        org=org,
+        quote=quote,
+        lines=lines,
+        generated_by="OpsPilot",
+        lead=lead_obj,
+        contact=contact_obj,
+        company=company_obj,
+    )
+    return Response(pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="quote-{quote.id}.pdf"'})
 
 
 @router.get("/accept/{token}")
