@@ -5,7 +5,8 @@ import { twMerge } from 'tailwind-merge';
 import { Card, CardHeader, CardContent, PageHeader, Button, Badge, Alert } from '../components/ui/';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
-import type { Organization, RoleType } from '../types/auth';
+import type { Locale, Organization, RoleType } from '../types/auth';
+import { supportedLocales, useTranslation, type TranslationKey } from '../i18n';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -21,17 +22,40 @@ interface Member {
   created_at: string;
 }
 
+type SettingsMessage =
+  | { text: string; type: 'success' | 'error' }
+  | { key: TranslationKey; values?: Record<string, string | number>; type: 'success' | 'error' };
+
+const roleTranslationKeys: Record<RoleType, TranslationKey> = {
+  employee: 'employee',
+  sales: 'sales',
+  project_manager: 'projectManager',
+  finance: 'financeRole',
+  approver: 'approver',
+  owner: 'owner',
+};
+
+const localeTranslationKeys: Record<Locale, TranslationKey> = {
+  en: 'english',
+  fr: 'french',
+  de: 'german',
+  es: 'spanish',
+  it: 'italian',
+};
+
 export const Settings: React.FC = () => {
   const { user, refreshUser } = useAuth();
+  const { t } = useTranslation();
   const [org, setOrg] = useState<Organization | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<RoleType>('employee');
-  const [msg, setMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [msg, setMsg] = useState<SettingsMessage | null>(null);
   const [loading, setLoading] = useState(false);
   const [orgName, setOrgName] = useState('');
   const [currency, setCurrency] = useState('USD');
   const [fullName, setFullName] = useState(user?.full_name || '');
+  const [locale, setLocale] = useState<Locale>(user?.locale || 'en');
 
   const fetchOrgData = async () => {
     try {
@@ -54,6 +78,10 @@ export const Settings: React.FC = () => {
     if (user?.full_name) setFullName(user.full_name);
   }, [user?.full_name]);
 
+  useEffect(() => {
+    if (user?.locale) setLocale(user.locale);
+  }, [user?.locale]);
+
   const sortedMembers = useMemo(() => {
     return [...members].sort((a, b) => a.full_name.localeCompare(b.full_name));
   }, [members]);
@@ -65,13 +93,13 @@ export const Settings: React.FC = () => {
     try {
       await apiRequest('/users/profile', {
         method: 'PUT',
-        body: JSON.stringify({ full_name: fullName }),
+        body: JSON.stringify({ full_name: fullName, locale }),
       });
       await refreshUser();
-      setMsg({ text: 'Your profile has been updated.', type: 'success' });
+      setMsg({ key: 'profileUpdated', type: 'success' });
     } catch (err) {
       setMsg({
-        text: err instanceof Error ? err.message : 'Could not update profile.',
+        text: err instanceof Error ? err.message : t('couldNotUpdateProfile'),
         type: 'error',
       });
     } finally {
@@ -89,11 +117,11 @@ export const Settings: React.FC = () => {
         body: JSON.stringify({ name: orgName, currency }),
       });
       setOrg(updated);
-      setMsg({ text: 'Workspace settings have been updated.', type: 'success' });
+      setMsg({ key: 'workspaceUpdated', type: 'success' });
       await refreshUser();
     } catch (err) {
       setMsg({
-        text: err instanceof Error ? err.message : 'Could not update workspace.',
+        text: err instanceof Error ? err.message : t('couldNotUpdateWorkspace'),
         type: 'error',
       });
     } finally {
@@ -110,25 +138,25 @@ export const Settings: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
       });
-      setMsg({ text: `Invited/updated ${inviteEmail} as ${inviteRole}`, type: 'success' });
+      setMsg({ key: 'inviteUpdated', values: { email: inviteEmail, role: t(roleTranslationKeys[inviteRole]) }, type: 'success' });
       setInviteEmail('');
       await fetchOrgData();
     } catch (err: any) {
-      setMsg({ text: err.message || 'Failed to invite member', type: 'error' });
+      setMsg({ text: err.message || t('failedInvite'), type: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
   const removeMember = async (member: Member) => {
-    if (!window.confirm(`Remove ${member.full_name} from this workspace?`)) return;
+    if (!window.confirm(t('removeMemberConfirm', { name: member.full_name }))) return;
     try {
       await apiRequest(`/organizations/members/${member.id}`, { method: 'DELETE' });
-      setMsg({ text: `${member.full_name} no longer has workspace access.`, type: 'success' });
+      setMsg({ key: 'memberRemoved', values: { name: member.full_name }, type: 'success' });
       await fetchOrgData();
     } catch (err) {
       setMsg({
-        text: err instanceof Error ? err.message : 'Could not remove workspace member.',
+        text: err instanceof Error ? err.message : t('couldNotRemoveMember'),
         type: 'error',
       });
     }
@@ -145,8 +173,8 @@ export const Settings: React.FC = () => {
   return (
     <div className="page-shell max-w-6xl space-y-6">
       <PageHeader
-        title="Workspace settings"
-        description="Manage organization profile, team members, roles, and plan limits."
+        title={t('workspaceSettings')}
+        description={t('settingsDescription')}
       />
 
       {msg && (
@@ -155,7 +183,7 @@ export const Settings: React.FC = () => {
           dismissible
           onDismiss={() => setMsg(null)}
         >
-          {msg.text}
+          {'key' in msg ? t(msg.key, msg.values) : msg.text}
         </Alert>
       )}
 
@@ -165,11 +193,11 @@ export const Settings: React.FC = () => {
             <form onSubmit={(e) => void saveOrganization(e)} className="space-y-4">
               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-semantic-text-muted">
                 <Shield className="w-4 h-4 text-semantic-accent" />
-                <span>Organization Profile</span>
+                <span>{t('organizationProfile')}</span>
               </div>
 
               <label className="block text-xs font-semibold text-semantic-text">
-                Workspace name
+                {t('workspaceName')}
                 <input
                   className={fieldControlClass}
                   required
@@ -180,7 +208,7 @@ export const Settings: React.FC = () => {
 
               <div>
                 <div className="text-xs font-semibold text-semantic-text">
-                  Workspace Identifier (Slug)
+                  {t('workspaceIdentifier')}
                 </div>
                 <div
                   className={cn(
@@ -195,7 +223,7 @@ export const Settings: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-semibold text-semantic-text">
-                  Operating Currency
+                  {t('operatingCurrency')}
                   <select
                     className={fieldControlClass}
                     value={currency}
@@ -211,7 +239,7 @@ export const Settings: React.FC = () => {
 
               <div className="pt-4 border-t border-semantic-border">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-semantic-text-muted">AI spend cap</span>
+                  <span className="text-semantic-text-muted">{t('aiSpendCap')}</span>
                   <span className="font-semibold text-semantic-text">
                     ${((org?.monthly_spend_cap_cents ?? 5000) / 100).toFixed(2)}
                   </span>
@@ -230,7 +258,7 @@ export const Settings: React.FC = () => {
               </div>
               {user?.role === 'owner' && (
                 <Button type="submit" loading={loading} className="w-full">
-                  {loading ? 'Saving&hellip;' : 'Save workspace'}
+                  {loading ? t('saving') : t('saveWorkspace')}
                 </Button>
               )}
             </form>
@@ -242,14 +270,14 @@ export const Settings: React.FC = () => {
             <CardContent>
               <form onSubmit={(e) => void saveProfile(e)} className="space-y-4">
                 <div>
-                  <h2 className="font-bold text-semantic-text">Your profile</h2>
+                  <h2 className="font-bold text-semantic-text">{t('yourProfile')}</h2>
                   <p className="mt-1 text-sm text-semantic-text-muted">
-                    Update the name shown to your workspace.
+                    {t('updateName')}
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="text-xs font-semibold text-semantic-text">
-                    Full name
+                    {t('fullName')}
                     <input
                       className={fieldControlClass}
                       required
@@ -258,16 +286,34 @@ export const Settings: React.FC = () => {
                     />
                   </label>
                   <label className="text-xs font-semibold text-semantic-text">
-                    Email address
+                    {t('emailAddress')}
                     <input
                       className={cn(fieldControlClass, 'bg-semantic-surface-muted')}
                       readOnly
                       value={user?.email || ''}
                     />
                   </label>
+                  <label className="text-xs font-semibold text-semantic-text">
+                    {t('language')}
+                    <select
+                      aria-label={t('language')}
+                      className={fieldControlClass}
+                      value={locale}
+                      onChange={(e) => setLocale(e.target.value as Locale)}
+                    >
+                      {supportedLocales.map((supportedLocale) => (
+                        <option key={supportedLocale} value={supportedLocale}>
+                          {t(localeTranslationKeys[supportedLocale])}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-1 block text-xs font-normal text-semantic-text-muted">
+                      {t('interfaceLanguage')}
+                    </span>
+                  </label>
                 </div>
                 <Button type="submit" loading={loading}>
-                  {loading ? 'Saving&hellip;' : 'Save profile'}
+                  {loading ? t('saving') : t('saveProfile')}
                 </Button>
               </form>
             </CardContent>
@@ -277,7 +323,7 @@ export const Settings: React.FC = () => {
             <CardHeader>
               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-semantic-text-muted">
                 <Users className="w-4 h-4 text-semantic-accent" />
-                <span>Team Members ({sortedMembers.length})</span>
+                <span>{t('teamMembers', { count: sortedMembers.length })}</span>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -285,15 +331,15 @@ export const Settings: React.FC = () => {
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-semantic-border text-semantic-text-muted">
-                      <th className="pb-2 font-medium">User</th>
+                      <th className="pb-2 font-medium">{t('user')}</th>
                       {user?.role === 'owner' && (
-                        <th className="pb-2 font-medium">Change role</th>
+                        <th className="pb-2 font-medium">{t('changeRole')}</th>
                       )}
                       {user?.role === 'owner' && (
-                        <th className="pb-2 font-medium">Access</th>
+                        <th className="pb-2 font-medium">{t('access')}</th>
                       )}
-                      <th className="pb-2 font-medium">Role</th>
-                      <th className="pb-2 font-medium">Status</th>
+                      <th className="pb-2 font-medium">{t('role')}</th>
+                      <th className="pb-2 font-medium">{t('status')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-semantic-border/60">
@@ -310,7 +356,7 @@ export const Settings: React.FC = () => {
                         {user?.role === 'owner' && (
                           <td className="py-2.5">
                             <select
-                              aria-label={`Role for ${m.full_name}`}
+                              aria-label={t('roleForMember', { name: m.full_name })}
                               className={cn(fieldControlClass, 'min-w-36')}
                               value={m.role}
                               onChange={async (e) => {
@@ -322,7 +368,8 @@ export const Settings: React.FC = () => {
                                     body: JSON.stringify({ email: m.email, role }),
                                   });
                                   setMsg({
-                                    text: `Updated ${m.full_name} to ${role}.`,
+                                    key: 'profileUpdatedRole',
+                                    values: { name: m.full_name, role: t(roleTranslationKeys[role]) },
                                     type: 'success',
                                   });
                                   await fetchOrgData();
@@ -331,7 +378,7 @@ export const Settings: React.FC = () => {
                                     text:
                                       err instanceof Error
                                         ? err.message
-                                        : 'Could not update member role.',
+                                        : t('couldNotUpdateRole'),
                                     type: 'error',
                                   });
                                 } finally {
@@ -339,12 +386,12 @@ export const Settings: React.FC = () => {
                                 }
                               }}
                             >
-                              <option value="employee">Employee</option>
-                              <option value="sales">Sales</option>
-                              <option value="project_manager">Project manager</option>
-                              <option value="finance">Finance</option>
-                              <option value="approver">Approver</option>
-                              <option value="owner">Owner</option>
+                              <option value="employee">{t('employee')}</option>
+                              <option value="sales">{t('sales')}</option>
+                              <option value="project_manager">{t('projectManager')}</option>
+                              <option value="finance">{t('financeRole')}</option>
+                              <option value="approver">{t('approver')}</option>
+                              <option value="owner">{t('owner')}</option>
                             </select>
                           </td>
                         )}
@@ -358,18 +405,18 @@ export const Settings: React.FC = () => {
                                 className="text-semantic-danger hover:bg-semantic-danger-soft hover:text-semantic-danger"
                                 onClick={() => void removeMember(m)}
                               >
-                                Remove
+                                {t('remove')}
                               </Button>
                             )}
                           </td>
                         )}
                         <td className="py-2.5">
-                          <Badge variant="muted">{m.role}</Badge>
+                          <Badge variant="muted">{t(roleTranslationKeys[m.role])}</Badge>
                         </td>
                         <td className="py-2.5">
                           <span className="inline-flex items-center gap-1 text-[11px] text-semantic-success font-medium">
                             <span className="w-1.5 h-1.5 rounded-full bg-semantic-success" />
-                            Active
+                            {t('active')}
                           </span>
                         </td>
                       </tr>
@@ -381,11 +428,11 @@ export const Settings: React.FC = () => {
               {user?.role === 'owner' && (
                 <form onSubmit={handleInvite} className="space-y-3 border-t border-semantic-border pt-4">
                   <div className="text-xs font-bold text-semantic-text mb-2">
-                    Add / Invite Team Member
+                    {t('addInviteMember')}
                   </div>
                   <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
                     <label className="text-xs font-semibold text-semantic-text">
-                      Member email
+                      {t('memberEmail')}
                       <input
                         type="email"
                         required
@@ -396,22 +443,22 @@ export const Settings: React.FC = () => {
                       />
                     </label>
                     <label className="text-xs font-semibold text-semantic-text">
-                      Workspace role
+                      {t('workspaceRole')}
                       <select
                         value={inviteRole}
                         onChange={(e) => setInviteRole(e.target.value as RoleType)}
                         className={fieldControlClass}
                       >
-                        <option value="employee">Employee</option>
-                        <option value="sales">Sales</option>
-                        <option value="project_manager">Project Manager</option>
-                        <option value="finance">Finance</option>
-                        <option value="approver">Approver</option>
-                        <option value="owner">Owner</option>
+                        <option value="employee">{t('employee')}</option>
+                        <option value="sales">{t('sales')}</option>
+                        <option value="project_manager">{t('projectManager')}</option>
+                        <option value="finance">{t('financeRole')}</option>
+                        <option value="approver">{t('approver')}</option>
+                        <option value="owner">{t('owner')}</option>
                       </select>
                     </label>
                     <Button type="submit" loading={loading} className="self-end">
-                      {loading ? 'Adding...' : 'Add Member'}
+                      {loading ? t('adding') : t('addMember')}
                     </Button>
                   </div>
                 </form>

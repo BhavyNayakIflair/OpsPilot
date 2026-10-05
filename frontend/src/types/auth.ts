@@ -1,9 +1,11 @@
 export type RoleType = 'owner' | 'sales' | 'project_manager' | 'finance' | 'employee' | 'approver';
+export type Locale = 'en' | 'fr' | 'de' | 'es' | 'it';
 
 export interface User {
   id: string;
   email: string;
   full_name: string;
+  locale: Locale;
   role: RoleType;
   org_id: string;
   org_name: string;

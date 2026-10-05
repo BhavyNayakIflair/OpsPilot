@@ -21,6 +21,8 @@ async def update_profile(
 ):
     if data.full_name is not None:
         user.full_name = data.full_name
+    if data.locale is not None:
+        user.locale = data.locale
     await db.commit()
     await db.refresh(user)
     return user

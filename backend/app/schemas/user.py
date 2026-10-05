@@ -1,6 +1,8 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, EmailStr, ConfigDict
+
+UserLocale = Literal["en", "fr", "de", "es", "it"]
 
 
 class UserBase(BaseModel):
@@ -21,12 +23,14 @@ class UserLogin(BaseModel):
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
+    locale: Optional[UserLocale] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
 
 
 class UserRead(UserBase):
     id: str
+    locale: UserLocale = "en"
     is_superuser: bool
     created_at: datetime
     updated_at: datetime

@@ -14,8 +14,16 @@ def upgrade():
     tables = set(inspector.get_table_names())
     is_postgres = bind.dialect.name == "postgresql"
 
+    # pgvector is optional — skip gracefully if the extension is not installed.
+    vector_available = False
     if is_postgres:
-        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        try:
+            bind.execute(sa.text("SAVEPOINT pgvector_check"))
+            op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            bind.execute(sa.text("RELEASE SAVEPOINT pgvector_check"))
+            vector_available = True
+        except Exception:
+            bind.execute(sa.text("ROLLBACK TO SAVEPOINT pgvector_check"))
 
     if "document_chunks" not in tables:
         op.create_table(
@@ -33,7 +41,7 @@ def upgrade():
         op.create_index("ix_document_chunks_org_id", "document_chunks", ["org_id"])
         op.create_index("ix_document_chunks_org_document", "document_chunks", ["org_id", "document_id"])
 
-    if is_postgres:
+    if is_postgres and vector_available:
         embedding_type = next(column["type"] for column in sa.inspect(bind).get_columns("document_chunks") if column["name"] == "embedding")
         if "vector" not in str(embedding_type).lower():
             op.execute("ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector(768) USING embedding::vector(768)")

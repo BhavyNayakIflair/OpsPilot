@@ -2,16 +2,28 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, Command, LogOut, Menu, Moon, Search, Sun, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useTranslation, type TranslationKey } from '../../i18n';
+import type { RoleType } from '../../types/auth';
 
-const destinations = [
-  ['Dashboard', '/dashboard'], ['CRM & Leads', '/crm'], ['Quotes & Proposals', '/quotes'],
-  ['Projects & Tasks', '/projects'], ['Timesheets', '/timesheets'], ['Invoices & Billing', '/invoicing'],
-  ['Expenses & Bills', '/expenses'], ['People & Team', '/people'], ['Documents & Knowledge', '/documents'],
-  ['Agent Workflows', '/workflows'], ['Approvals Inbox', '/approvals'], ['Workspace settings', '/settings'],
+const destinations: [TranslationKey, string][] = [
+  ['dashboard', '/dashboard'], ['crmLeads', '/crm'], ['quotesProposals', '/quotes'],
+  ['projectsTasks', '/projects'], ['timesheets', '/timesheets'], ['invoicesBilling', '/invoicing'],
+  ['expensesBills', '/expenses'], ['peopleTeam', '/people'], ['documentsKnowledge', '/documents'],
+  ['agentWorkflows', '/workflows'], ['approvalsInbox', '/approvals'], ['workspaceSettings', '/settings'],
 ];
+
+const roleLabels: Record<RoleType, TranslationKey> = {
+  owner: 'owner',
+  sales: 'sales',
+  project_manager: 'projectManager',
+  finance: 'financeRole',
+  employee: 'employee',
+  approver: 'approver',
+};
 
 export const Navbar: React.FC<{ onMenu?: () => void }> = ({ onMenu }) => {
   const { user, logout } = useAuth();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [isDark, setIsDark] = React.useState(() => localStorage.getItem('opspilot_theme') === 'dark');
   const [paletteOpen, setPaletteOpen] = React.useState(false);
@@ -28,30 +40,30 @@ export const Navbar: React.FC<{ onMenu?: () => void }> = ({ onMenu }) => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-  const filtered = destinations.filter(([label]) => label.toLowerCase().includes(query.toLowerCase()));
+  const filtered = destinations.filter(([key]) => t(key).toLowerCase().includes(query.toLowerCase()));
   const openDestination = (path: string) => { setPaletteOpen(false); setQuery(''); navigate(path); };
 
   return <>
     <header className="z-20 flex h-[68px] shrink-0 items-center justify-between border-b border-semantic-border bg-semantic-surface/90 px-4 backdrop-blur-xl sm:px-6">
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <button className="rounded-ui-lg p-2 text-semantic-text-muted transition hover:bg-semantic-surface-muted hover:text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border md:hidden" aria-label="Open navigation" onClick={onMenu}><Menu className="h-5 w-5" /></button>
+        <button className="rounded-ui-lg p-2 text-semantic-text-muted transition hover:bg-semantic-surface-muted hover:text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border md:hidden" aria-label={t('openNavigation')} onClick={onMenu}><Menu className="h-5 w-5" /></button>
         <button onClick={() => setPaletteOpen(true)} className="flex w-full max-w-[520px] items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface-muted px-3.5 py-2.5 text-left text-sm text-semantic-text-muted transition hover:border-semantic-accent/50 hover:bg-semantic-surface focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-accent-ring">
-          <span className="flex items-center gap-2.5"><Search className="h-4 w-4" /><span className="hidden sm:inline">Jump to a page or workspace</span><span className="sm:hidden">Search pages</span></span>
+          <span className="flex items-center gap-2.5"><Search className="h-4 w-4" /><span className="hidden sm:inline">{t('jumpToPage')}</span><span className="sm:hidden">{t('searchPages')}</span></span>
           <kbd className="hidden items-center gap-1 rounded-ui-md border border-semantic-border bg-semantic-surface px-1.5 py-0.5 text-[10px] font-medium text-semantic-text-subtle sm:inline-flex"><Command className="h-3 w-3" /> K</kbd>
         </button>
       </div>
       <div className="ml-3 flex items-center gap-1 sm:gap-2">
-        <button onClick={() => setIsDark((value) => !value)} title={isDark ? 'Use light theme' : 'Use dark theme'} className="rounded-ui-xl p-2.5 text-semantic-text-muted transition hover:bg-semantic-surface-muted hover:text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border">{isDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}</button>
+        <button onClick={() => setIsDark((value) => !value)} title={isDark ? t('useLightTheme') : t('useDarkTheme')} className="rounded-ui-xl p-2.5 text-semantic-text-muted transition hover:bg-semantic-surface-muted hover:text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border">{isDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}</button>
         <div className="mx-1 hidden h-7 w-px bg-semantic-border sm:block" />
-        <div className="hidden text-right sm:block"><p className="text-xs font-semibold text-semantic-text">{user?.full_name}</p><p className="mt-0.5 text-[11px] capitalize text-semantic-text-muted">{user?.role} · {user?.org_name}</p></div>
-        <button onClick={logout} title="Sign out" className="ml-1 flex items-center gap-2 rounded-ui-xl border border-semantic-border px-3 py-2 text-xs font-semibold text-semantic-text-muted transition hover:border-semantic-danger/40 hover:bg-semantic-danger-soft hover:text-semantic-danger focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-danger-ring"><LogOut className="h-4 w-4" /><span className="hidden lg:inline">Sign out</span></button>
+        <div className="hidden text-right sm:block"><p className="text-xs font-semibold text-semantic-text">{user?.full_name}</p><p className="mt-0.5 text-[11px] capitalize text-semantic-text-muted">{user ? t(roleLabels[user.role]) : ''} · {user?.org_name}</p></div>
+        <button onClick={logout} title={t('signOut')} className="ml-1 flex items-center gap-2 rounded-ui-xl border border-semantic-border px-3 py-2 text-xs font-semibold text-semantic-text-muted transition hover:border-semantic-danger/40 hover:bg-semantic-danger-soft hover:text-semantic-danger focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-danger-ring"><LogOut className="h-4 w-4" /><span className="hidden lg:inline">{t('signOut')}</span></button>
       </div>
     </header>
     {paletteOpen && <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/35 px-4 pt-[12vh] backdrop-blur-sm" onMouseDown={(e) => { if (e.target === e.currentTarget) setPaletteOpen(false); }}>
-      <section role="dialog" aria-modal="true" aria-label="Navigate OpsPilot" className="w-full max-w-xl overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface shadow-ui-xl">
-        <div className="flex items-center gap-3 border-b border-semantic-border px-4"><Search className="h-4 w-4 text-semantic-text-subtle" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a page…" className="h-14 min-w-0 flex-1 bg-transparent text-sm text-semantic-text outline-none placeholder:text-semantic-text-subtle" /><button onClick={() => setPaletteOpen(false)} aria-label="Close search" className="rounded-ui-lg p-1.5 text-semantic-text-subtle transition hover:bg-semantic-surface-muted hover:text-semantic-text"><X className="h-4 w-4" /></button></div>
-        <div className="max-h-[55vh] overflow-y-auto p-2">{filtered.map(([label, path]) => <button key={path} onClick={() => openDestination(path)} className="flex w-full items-center justify-between rounded-ui-xl px-3 py-3 text-left text-sm font-medium text-semantic-text transition hover:bg-semantic-accent-soft hover:text-semantic-accent"><span>{label}</span><span className="text-[11px] text-semantic-text-subtle">Open</span></button>)}{!filtered.length && <p className="p-7 text-center text-sm text-semantic-text-muted">No pages match “{query}”.</p>}</div>
-        <div className="flex items-center gap-2 border-t border-semantic-border px-4 py-3 text-[11px] text-semantic-text-subtle"><Check className="h-3.5 w-3.5" />Quick navigation · AI drafting is available inside Quotes</div>
+      <section role="dialog" aria-modal="true" aria-label={t('navigateOpsPilot')} className="w-full max-w-xl overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface shadow-ui-xl">
+        <div className="flex items-center gap-3 border-b border-semantic-border px-4"><Search className="h-4 w-4 text-semantic-text-subtle" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('findPage')} className="h-14 min-w-0 flex-1 bg-transparent text-sm text-semantic-text outline-none placeholder:text-semantic-text-subtle" /><button onClick={() => setPaletteOpen(false)} aria-label={t('closeNavigation')} className="rounded-ui-lg p-1.5 text-semantic-text-subtle transition hover:bg-semantic-surface-muted hover:text-semantic-text"><X className="h-4 w-4" /></button></div>
+        <div className="max-h-[55vh] overflow-y-auto p-2">{filtered.map(([key, path]) => <button key={path} onClick={() => openDestination(path)} className="flex w-full items-center justify-between rounded-ui-xl px-3 py-3 text-left text-sm font-medium text-semantic-text transition hover:bg-semantic-accent-soft hover:text-semantic-accent"><span>{t(key)}</span><span className="text-[11px] text-semantic-text-subtle">{t('open')}</span></button>)}{!filtered.length && <p className="p-7 text-center text-sm text-semantic-text-muted">{t('noPagesMatch', { query })}</p>}</div>
+        <div className="flex items-center gap-2 border-t border-semantic-border px-4 py-3 text-[11px] text-semantic-text-subtle"><Check className="h-3.5 w-3.5" />{t('quickNavigation')}</div>
       </section>
     </div>}
   </>;

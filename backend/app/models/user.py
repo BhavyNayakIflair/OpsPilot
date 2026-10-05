@@ -11,6 +11,7 @@ class User(Base, TimestampMixin):
     email = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
+    locale = Column(String(5), default="en", nullable=False, server_default="en")
     is_active = Column(Boolean, default=True, nullable=False)
     is_superuser = Column(Boolean, default=False, nullable=False)
 

@@ -44,6 +44,7 @@ async def get_me(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
+        locale=user.locale,
         is_active=user.is_active,
         is_superuser=user.is_superuser,
         created_at=user.created_at,

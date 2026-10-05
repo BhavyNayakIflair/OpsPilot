@@ -18,64 +18,76 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { apiRequest } from '../../lib/api';
+import { useTranslation, type TranslationKey } from '../../i18n';
 import { Badge } from '../ui/Badge';
+import type { RoleType } from '../../types/auth';
 
 interface NavItem {
-  name: string;
+  name: TranslationKey;
   path: string;
   icon: React.ComponentType<{ className?: string }>;
-  badge?: string;
+  badge?: TranslationKey;
   isAi?: boolean;
 }
 
-const navSections: { label: string; items: NavItem[] }[] = [
+const navSections: { label: TranslationKey; items: NavItem[] }[] = [
   {
-    label: 'Workspace',
+    label: 'workspace',
     items: [
-      { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-      { name: 'CRM & Leads', path: '/crm', icon: Users },
-      { name: 'Quotes & Proposals', path: '/quotes', icon: FileText },
+      { name: 'dashboard', path: '/dashboard', icon: LayoutDashboard },
+      { name: 'crmLeads', path: '/crm', icon: Users },
+      { name: 'quotesProposals', path: '/quotes', icon: FileText },
     ],
   },
   {
-    label: 'Delivery',
+    label: 'delivery',
     items: [
-      { name: 'Projects & Tasks', path: '/projects', icon: FolderKanban },
-      { name: 'Timesheets', path: '/timesheets', icon: Clock },
+      { name: 'projectsTasks', path: '/projects', icon: FolderKanban },
+      { name: 'timesheets', path: '/timesheets', icon: Clock },
     ],
   },
   {
-    label: 'Finance',
+    label: 'finance',
     items: [
-      { name: 'Invoices & Billing', path: '/invoicing', icon: Receipt },
-      { name: 'Expenses & Bills', path: '/expenses', icon: CreditCard },
+      { name: 'invoicesBilling', path: '/invoicing', icon: Receipt },
+      { name: 'expensesBills', path: '/expenses', icon: CreditCard },
     ],
   },
   {
-    label: 'Team',
+    label: 'team',
     items: [
-      { name: 'People & Team', path: '/people', icon: Contact },
-      { name: 'Documents & SOWs', path: '/documents', icon: BookOpen },
-      { name: 'Odoo Migration', path: '/migration', icon: ArrowLeftRight, badge: 'New' },
+      { name: 'peopleTeam', path: '/people', icon: Contact },
+      { name: 'documentsSows', path: '/documents', icon: BookOpen },
+      { name: 'odooMigration', path: '/migration', icon: ArrowLeftRight, badge: 'new' },
     ],
   },
   {
-    label: 'Automation',
+    label: 'automation',
     items: [
-      { name: 'Agent Workflows', path: '/workflows', icon: Bot, isAi: true },
-      { name: 'Approvals Inbox', path: '/approvals', icon: CheckCircle2 },
+      { name: 'agentWorkflows', path: '/workflows', icon: Bot, isAi: true },
+      { name: 'approvalsInbox', path: '/approvals', icon: CheckCircle2 },
     ],
   },
   {
-    label: 'Admin',
+    label: 'admin',
     items: [
-      { name: 'Settings', path: '/settings', icon: Settings },
+      { name: 'settings', path: '/settings', icon: Settings },
     ],
   },
 ];
 
+const roleLabels: Record<RoleType, TranslationKey> = {
+  owner: 'owner',
+  sales: 'sales',
+  project_manager: 'projectManager',
+  finance: 'financeRole',
+  employee: 'employee',
+  approver: 'approver',
+};
+
 export const Sidebar: React.FC<{ onNavigate?: () => void }> = ({ onNavigate }) => {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [approvalCount, setApprovalCount] = React.useState(0);
   React.useEffect(() => {
     let active = true;
@@ -100,13 +112,13 @@ export const Sidebar: React.FC<{ onNavigate?: () => void }> = ({ onNavigate }) =
       </div>
 
       <div className="px-4 py-3 border-b border-slate-800/80 bg-slate-950/40">
-        <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Workspace</div>
+        <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">{t('workspace')}</div>
         <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5 mt-0.5">
           <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-          {user?.org_name || 'My Organization'}
+          {user?.org_name || t('myOrganization')}
         </div>
         <div className="text-xs text-slate-400 flex items-center justify-between mt-1">
-          <span className="capitalize text-[11px] text-sky-400 font-medium">Role: {user?.role || 'employee'}</span>
+          <span className="capitalize text-[11px] text-sky-400 font-medium">{t('role')}: {t(user ? roleLabels[user.role] : 'employee')}</span>
           <span className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">v0.1</span>
         </div>
       </div>
@@ -115,7 +127,7 @@ export const Sidebar: React.FC<{ onNavigate?: () => void }> = ({ onNavigate }) =
         {navSections.map((section) => (
           <div key={section.label}>
             <div className="px-3 pt-4 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-semantic-text-subtle">
-              {section.label}
+              {t(section.label)}
             </div>
             <div className="space-y-1">
               {section.items.map((item) => {
@@ -134,7 +146,7 @@ export const Sidebar: React.FC<{ onNavigate?: () => void }> = ({ onNavigate }) =
                   >
                     <div className="flex items-center gap-3">
                       <Icon className="w-4 h-4 shrink-0" />
-                      <span>{item.name}</span>
+                      <span>{t(item.name)}</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       {item.isAi && (
@@ -144,7 +156,7 @@ export const Sidebar: React.FC<{ onNavigate?: () => void }> = ({ onNavigate }) =
                         <Badge variant="count">{approvalCount}</Badge>
                       )}
                       {item.badge && item.path !== '/approvals' && (
-                        <Badge variant="new">{item.badge}</Badge>
+                        <Badge variant="new">{t(item.badge)}</Badge>
                       )}
                     </div>
                   </NavLink>
@@ -161,7 +173,7 @@ export const Sidebar: React.FC<{ onNavigate?: () => void }> = ({ onNavigate }) =
             {user?.full_name?.charAt(0) || 'U'}
           </div>
           <div className="overflow-hidden">
-            <div className="text-sm font-medium text-white truncate">{user?.full_name || 'User'}</div>
+            <div className="text-sm font-medium text-white truncate">{user?.full_name || t('user')}</div>
             <div className="text-xs text-slate-400 truncate">{user?.email || ''}</div>
           </div>
         </div>
