@@ -59,6 +59,44 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(api_router, prefix="/api")
 
 
+@app.get("/health", tags=["system"])
+async def root_health():
+    """Liveness probe: no dependencies, immediate 200 OK (stops 404 log spam)."""
+    return {
+        "status": "ok",
+        "app": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+    }
+
+
+@app.get("/ready", tags=["system"])
+async def root_ready():
+    """
+    Readiness probe: checks DB and returns cached AI provider states.
+    """
+    from sqlalchemy import text
+    from app.core.database import AsyncSessionLocal
+    from app.ai.health import get_ai_providers_status
+
+    db_status = "ok"
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as exc:
+        db_status = f"unhealthy: {exc}"
+
+    ai_status = get_ai_providers_status()
+    is_ready = ("unhealthy" not in db_status)
+
+    return {
+        "status": "ok" if is_ready else "degraded",
+        "app": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "database": db_status,
+        "ai_providers": ai_status,
+    }
+
+
 @app.get("/")
 async def root():
     return {
@@ -66,3 +104,4 @@ async def root():
         "docs": "/docs",
         "version": settings.VERSION,
     }
+

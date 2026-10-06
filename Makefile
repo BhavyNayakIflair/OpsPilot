@@ -19,3 +19,7 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+ai-smoke:
+	PYTHONPATH=backend .venv/bin/python backend/scripts/ai_smoke.py
+

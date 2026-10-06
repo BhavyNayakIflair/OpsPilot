@@ -68,3 +68,12 @@ def test_ollama_falls_back_to_legacy_embedding_endpoint():
     assert all(len(vector) == 768 for vector in vectors)
     assert paths.count("/api/embed") == 2
     assert paths.count("/api/embeddings") == 2
+
+
+def test_factory_supports_router_and_auto():
+    from app.ai.gateway_adapter import LegacyGatewayAdapter
+    provider = get_provider("router")
+    assert isinstance(provider, LegacyGatewayAdapter)
+    auto_provider = get_provider("auto")
+    assert isinstance(auto_provider, LegacyGatewayAdapter)
+

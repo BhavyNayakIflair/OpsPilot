@@ -107,10 +107,14 @@ class OllamaProvider(LLMProvider):
             if result:
                 return
 
-        except ProviderError:
+        except ProviderError as exc:
             # `/api/show` returns 404 when the model does not exist.
-            # In that case we attempt an explicit pull below.
-            pass
+            # If Ollama server is down or returns 5xx/timeout, re-raise instead of pulling.
+            cause = exc.__cause__
+            if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 404:
+                pass
+            else:
+                raise
 
         try:
             logger.info("Ollama model '%s' is missing; attempting to pull it.", model)
