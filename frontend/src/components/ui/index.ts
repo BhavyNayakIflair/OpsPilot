@@ -8,3 +8,4 @@ export { EmptyState } from './EmptyState';
 export { DataTable } from './DataTable';
 export type { DataTableColumn, DataTableFilterDef, DataTableProps } from './DataTable';
 export { default as AIProgress } from './AIProgress';
+export { AIGatewayBanner, type AIGatewayStatus, type AIGatewayBannerProps } from './AIGatewayBanner';

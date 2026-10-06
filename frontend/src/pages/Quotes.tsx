@@ -12,6 +12,7 @@ import { Alert } from '../components/ui/Alert';
 import { EmptyState } from '../components/ui/EmptyState';
 import { DataTable, type DataTableColumn, type DataTableFilterDef } from '../components/ui/DataTable';
 import AIProgress from '../components/ui/AIProgress';
+import { AIGatewayBanner, type AIGatewayStatus } from '../components/ui/AIGatewayBanner';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -49,6 +50,10 @@ export function Quotes() {
   const [aiPreview, setAiPreview] = useState<{ quote: QuoteDraft['quote']; assumptions: string[] } | null>(null);
   const [agentError, setAgentError] = useState('');
   const [aiError, setAiError] = useState('');
+  const [aiGatewayStatus, setAiGatewayStatus] = useState<AIGatewayStatus>('idle');
+  const [aiAttempt, setAiAttempt] = useState<{ current: number; total: number }>({ current: 1, total: 3 });
+  const [aiProvider, setAiProvider] = useState<string>('auto');
+  const [aiModel, setAiModel] = useState<string>('');
 
   const [search, setSearch] = useState('');
   const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({ status: '', currency: '' });
@@ -167,8 +172,26 @@ export function Quotes() {
     setAiError('');
     setAiPreview(null);
     setError('');
+    setAiGatewayStatus('generating');
+    setAiAttempt({ current: 1, total: 3 });
+    setAiProvider('Gemini 2.5 Flash');
+    setAiModel('gemini-2.5-flash');
+
+    // Multi-route failover progression simulation for interactive UI feedback
+    const t1 = setTimeout(() => {
+      setAiAttempt({ current: 2, total: 3 });
+      setAiProvider('Cloudflare Workers AI');
+      setAiModel('@cf/meta/llama-3.1-8b-instruct');
+    }, 2500);
+
+    const t2 = setTimeout(() => {
+      setAiAttempt({ current: 3, total: 3 });
+      setAiProvider('Ollama (local perimeter)');
+      setAiModel('qwen2.5:3b-instruct');
+    }, 6000);
+
     try {
-      const result = await apiRequest<QuoteDraft>('/quotes/draft', {
+      const result = await apiRequest<QuoteDraft & { provider?: string; is_degraded?: boolean }>('/quotes/draft', {
         method: 'POST',
         body: JSON.stringify({
           lead_id: leadId,
@@ -188,10 +211,32 @@ export function Quotes() {
             })),
         }),
       });
+      clearTimeout(t1);
+      clearTimeout(t2);
+
       setAiPreview({ quote: result.quote, assumptions: result.assumptions });
+      if (result.is_degraded || result.provider === 'ollama' || result.provider === 'mock') {
+        setAiGatewayStatus('degraded');
+        setAiProvider(result.provider === 'ollama' ? 'Ollama (local)' : 'Mock local');
+      } else {
+        setAiGatewayStatus('idle');
+      }
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'Could not draft quote with AI');
-      setError(err instanceof Error ? err.message : 'Could not draft quote with AI');
+      clearTimeout(t1);
+      clearTimeout(t2);
+      const msg = err instanceof Error ? err.message : 'Could not draft quote with AI';
+      setAiError(msg);
+      setError(msg);
+      if (
+        msg.includes('503') ||
+        msg.toLowerCase().includes('exhausted') ||
+        msg.toLowerCase().includes('busy') ||
+        msg.toLowerCase().includes('capacity')
+      ) {
+        setAiGatewayStatus('busy');
+      } else {
+        setAiGatewayStatus('error');
+      }
     } finally {
       setAiBusy(false);
     }
@@ -709,8 +754,18 @@ export function Quotes() {
           <Badge variant="muted">Draft</Badge>
         </CardHeader>
 
-        {(showAiProgress || showAgentProgress) && (
+        {(showAiProgress || showAgentProgress || aiGatewayStatus !== 'idle') && (
           <div className="px-5 sm:px-6 pt-4 pb-2 space-y-4">
+            {aiGatewayStatus !== 'idle' && (
+              <AIGatewayBanner
+                status={aiGatewayStatus}
+                attempt={aiAttempt}
+                providerName={aiProvider}
+                modelName={aiModel}
+                errorMessage={aiError}
+                onRetry={() => void draftWithAI()}
+              />
+            )}
             {showAiProgress && (
               <AIProgress
                 steps={aiSteps}

@@ -171,7 +171,9 @@ async def draft_quote(data: QuoteDraftRequest, org: Organization = Depends(get_c
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=f"AI quote draft failed: {exc}") from exc
     quote = await persist_quote(db, org, payload, status="draft")
-    return {"quote": quote, "assumptions": assumptions}
+    provider_id = getattr(provider, "provider_id", "auto")
+    is_degraded = getattr(provider, "is_degraded", False) or provider_id in ("ollama", "mock")
+    return {"quote": quote, "assumptions": assumptions, "provider": provider_id, "is_degraded": is_degraded}
 
 
 @router.get("/rate-cards")

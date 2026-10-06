@@ -25,8 +25,16 @@ graph LR
     Backend -->|Multi-Tenant Scoped| DB[("PostgreSQL 16 + pgvector")]
     Backend -->|Queue & PubSub| Redis[("Redis 7 (arq worker)")]
     Backend -->|Agent Workflows| LangGraph["LangGraph Engine + Checkpointing"]
-    LangGraph -->|Model Routing| Gateway["Model Gateway (Fast / Reasoning / Reviewer / Mock)"]
+    Backend -->|AIRouter| Gateway["Zero-Cost AI Gateway ($0.00 Forever)"]
+    Gateway --> Gemini["Google Gemini 2.5 Flash / Embeddings"]
+    Gateway --> Groq["Groq Llama 3.3 70B / 3.1 8B"]
+    Gateway --> CF["Cloudflare Workers AI (Llama / BGE)"]
+    Gateway --> Mistral["Mistral Small / Codestral"]
+    Gateway --> OpenRouter["OpenRouter (:free Models Only)"]
+    Gateway --> Ollama["Ollama Local (Offline / Confidential)"]
 ```
+
+See [docs/ai-gateway.md](docs/ai-gateway.md) for full architecture specifications, task profile matrices, privacy tiers, and operational runbooks.
 
 ---
 
