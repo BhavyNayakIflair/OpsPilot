@@ -20,6 +20,9 @@ from app.ai.errors import (
     QuotaExceededError,
     SchemaValidationError,
 )
+from app.ai.privacy.classifier import DataClassification, classify_data
+from app.ai.privacy.injection import PromptInjectionGuard
+from app.ai.privacy.pii import PIIRedactor
 from app.ai.providers.base import JsonRequest, JsonResult, TextRequest, TextResult
 from app.ai.providers.registry import get_provider_by_id
 from app.ai.routing.breaker import circuit_breaker
