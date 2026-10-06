@@ -9,7 +9,7 @@ from app.models.user import User
 from app.models.membership import Membership, RoleType
 from app.models.operations import Project
 from app.models.billing import Invoice, InvoiceLineItem, Payment, Expense
-from app.schemas.billing import InvoiceCreate, PaymentCreate, ExpenseCreate, ExpenseUpdate
+from app.schemas.billing import InvoiceCreate, PaymentCreate, ExpenseCreate, ExpenseUpdate, BillingAnomalyReport
 
 router = APIRouter()
 
@@ -147,3 +147,14 @@ async def review_expense(expense_id: str, data: dict, org: Organization = Depend
     row = await _owned(db, Expense, expense_id, org.id)
     if row.status != "pending": raise HTTPException(status_code=409, detail="Expense has already been reviewed")
     row.status = status_value; await db.commit(); await db.refresh(row); return row
+
+
+@router.post("/anomalies/explain", response_model=BillingAnomalyReport)
+async def explain_billing_anomalies(
+    period: str = None,
+    org: Organization = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+    _role: Membership = Depends(require_role([RoleType.FINANCE, RoleType.OWNER])),
+):
+    from app.services.billing_service import detect_and_explain_anomalies
+    return await detect_and_explain_anomalies(db, org.id, period=period)

@@ -85,6 +85,8 @@ async def root_ready():
     except Exception as exc:
         db_status = f"unhealthy: {exc}"
 
+    from app.ai.observability.metrics import ai_metrics
+
     ai_status = get_ai_providers_status()
     is_ready = ("unhealthy" not in db_status)
 
@@ -94,6 +96,7 @@ async def root_ready():
         "version": settings.VERSION,
         "database": db_status,
         "ai_providers": ai_status,
+        "ai_metrics": ai_metrics.get_summary(),
     }
 
 

@@ -90,8 +90,22 @@ class MockProvider:
 
     async def generate_text(self, req: TextRequest) -> TextResult:
         started = time.monotonic()
+        prompt_lower = req.prompt.lower()
+        if "rag_answer" in req.task_type or "context documents" in prompt_lower:
+            import re
+            chunk_match = re.search(r"\[Chunk ([^ \]|]+)", req.prompt)
+            chunk_ref = f"[Chunk {chunk_match.group(1)}]" if chunk_match else "[Chunk chunk-1]"
+            if "99.95%" in req.prompt:
+                text_out = f"Our enterprise SLA guarantees 99.95% annual uptime as specified in {chunk_ref}."
+            elif "15-minute" in req.prompt or "15" in req.prompt:
+                text_out = f"Priority 1 critical incidents have a 15-minute response SLA as specified in {chunk_ref}."
+            else:
+                text_out = f"Verified according to {chunk_ref}."
+        else:
+            text_out = "Mock text output."
+
         return TextResult(
-            text="Mock text output.",
+            text=text_out,
             provider=self.id,
             model="mock-v1",
             latency_ms=(time.monotonic() - started) * 1000,

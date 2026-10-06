@@ -54,6 +54,8 @@ class DocumentChunk(Base, TimestampMixin):
     content = Column(Text, nullable=False)
     embedding = Column(VectorEmbedding(), nullable=False)
     chunk_index = Column(Integer, nullable=False)
+    embedding_model = Column(String(100), nullable=True, default="gemini-embedding-001")
+    embedding_dimension = Column(Integer, nullable=True, default=768)
 
 
 class WorkflowRun(Base, TimestampMixin):

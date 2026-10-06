@@ -111,14 +111,44 @@ async def list_approvals(org: Organization = Depends(get_current_tenant), db: As
         WorkflowRun, WorkflowRun.id == QuoteAgentApproval.workflow_run_id
     ).where(QuoteAgentApproval.org_id == org.id, QuoteAgentApproval.status == "pending",
             WorkflowRun.org_id == org.id))).all()
-    quote_items = [{"id": approval.id, "entity_type": "quote_agent",
-                    "label": f"Quote draft review · {(await db.scalar(select(Lead.title).where(Lead.id == run.input_data.get('lead_id'), Lead.org_id == org.id))) or 'lead'}",
-                    "reason": approval.reason, "quote_preview": run.result_data.get("quote_preview", {}),
-                    "assumptions": run.result_data.get("assumptions", []), "created_at": approval.created_at}
-                   for approval, run in quote_approvals]
-    return ([{"id": row.id, "entity_type": "timesheet", "label": row.description, "amount_cents": None, "created_at": row.created_at} for row in times]
-            + [{"id": row.id, "entity_type": "expense", "label": f"{row.vendor}: {row.description}", "amount_cents": row.amount_cents, "currency": row.currency, "created_at": row.created_at} for row in expenses]
-            + quote_items)
+    quote_items = [{
+        "id": approval.id,
+        "entity_type": "quote_agent",
+        "label": f"Quote draft review · {(await db.scalar(select(Lead.title).where(Lead.id == run.input_data.get('lead_id'), Lead.org_id == org.id))) or 'lead'}",
+        "reason": approval.reason,
+        "quote_preview": run.result_data.get("quote_preview", {}),
+        "assumptions": run.result_data.get("assumptions", []),
+        "created_at": approval.created_at,
+        "is_ai_generated": True,
+        "ai_label": "AI-Generated Draft",
+        "source_links": {
+            "run_id": run.id,
+            "lead_id": run.input_data.get("lead_id"),
+            "rate_card_id": run.input_data.get("rate_card_id"),
+        },
+    } for approval, run in quote_approvals]
+    return ([{
+        "id": row.id,
+        "entity_type": "timesheet",
+        "label": row.description,
+        "amount_cents": None,
+        "created_at": row.created_at,
+        "is_ai_generated": False,
+        "ai_label": None,
+        "source_links": {"project_id": row.project_id},
+    } for row in times]
+    + [{
+        "id": row.id,
+        "entity_type": "expense",
+        "label": f"{row.vendor}: {row.description}",
+        "amount_cents": row.amount_cents,
+        "currency": row.currency,
+        "created_at": row.created_at,
+        "is_ai_generated": False,
+        "ai_label": None,
+        "source_links": None,
+    } for row in expenses]
+    + quote_items)
 
 
 @router.post("/approvals/{entity_type}/{entity_id}")

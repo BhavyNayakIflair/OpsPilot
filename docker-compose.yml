@@ -104,6 +104,23 @@ services:
     ports:
       - "3000:80"
 
+  langfuse:
+    image: langfuse/langfuse:2
+    profiles: ["observability"]
+    container_name: opspilot_langfuse
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    environment:
+      - DATABASE_URL=postgresql://opspilot:opspilot_password@postgres:5432/opspilot
+      - NEXTAUTH_SECRET=opspilot-langfuse-secret-key-12345
+      - SALT=opspilot-langfuse-salt-12345
+      - NEXTAUTH_URL=http://localhost:3001
+      - TELEMETRY_ENABLED=false
+
 volumes:
   postgres_data:
   redis_data:

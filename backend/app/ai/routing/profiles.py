@@ -92,10 +92,12 @@ def get_task_profiles() -> Dict[str, TaskProfile]:
         "billing_explain": TaskProfile(
             name="billing_explain",
             chain=[
-                RouteCandidate("groq", "llama-3.1-8b-instant", timeout_seconds=6.0, temperature=0.2, max_tokens=512),
-                RouteCandidate("gemini", "gemini-2.0-flash", timeout_seconds=8.0, temperature=0.2, max_tokens=512),
-                RouteCandidate("mistral", "mistral-small-latest", timeout_seconds=6.0, temperature=0.2, max_tokens=512),
-                RouteCandidate("ollama", ai_settings.OLLAMA_FAST_MODEL, timeout_seconds=10.0, temperature=0.2, max_tokens=512),
+                RouteCandidate("groq", "openai/gpt-oss-20b", timeout_seconds=6.0, temperature=0.2, max_tokens=1024),
+                RouteCandidate("gemini", "gemma-4-26b-a4b-it", timeout_seconds=8.0, temperature=0.2, max_tokens=1024),
+                RouteCandidate("cloudflare", "@cf/meta/llama-3.1-8b-instruct", timeout_seconds=6.0, temperature=0.2, max_tokens=1024),
+                RouteCandidate("openrouter", "apodex/apodex-1.1-mini:free", timeout_seconds=6.0, temperature=0.2, max_tokens=1024),
+                RouteCandidate("mistral", "mistral-small-latest", timeout_seconds=6.0, temperature=0.2, max_tokens=1024),
+                RouteCandidate("ollama", ai_settings.OLLAMA_FAST_MODEL, timeout_seconds=10.0, temperature=0.2, max_tokens=1024),
             ],
             max_total_timeout_seconds=20.0,
             cache_ttl_seconds=86400,
@@ -106,9 +108,12 @@ def get_task_profiles() -> Dict[str, TaskProfile]:
         "mapping_suggest": TaskProfile(
             name="mapping_suggest",
             chain=[
-                RouteCandidate("gemini", "gemini-2.0-flash", timeout_seconds=7.0, temperature=0.1, max_tokens=1024),
-                RouteCandidate("groq", "llama-3.1-8b-instant", timeout_seconds=6.0, temperature=0.1, max_tokens=1024),
+                RouteCandidate("groq", "openai/gpt-oss-20b", timeout_seconds=6.0, temperature=0.1, max_tokens=1024),
+                RouteCandidate("gemini", "gemma-4-26b-a4b-it", timeout_seconds=7.0, temperature=0.1, max_tokens=1024),
+                RouteCandidate("cloudflare", "@cf/meta/llama-3.1-8b-instruct", timeout_seconds=6.0, temperature=0.1, max_tokens=1024),
+                RouteCandidate("openrouter", "apodex/apodex-1.1-mini:free", timeout_seconds=6.0, temperature=0.1, max_tokens=1024),
                 RouteCandidate("mistral", "mistral-small-latest", timeout_seconds=6.0, temperature=0.1, max_tokens=1024),
+                RouteCandidate("ollama", ai_settings.OLLAMA_FAST_MODEL, timeout_seconds=10.0, temperature=0.1, max_tokens=1024),
             ],
             max_total_timeout_seconds=20.0,
             cache_ttl_seconds=86400,

@@ -93,3 +93,24 @@ class ExpenseRead(ExpenseCreate, ReadModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class AnomalyItem(BaseModel):
+    entity_type: str  # "invoice_line", "expense", "timesheet"
+    entity_id: str
+    reference_id: Optional[str] = None
+    metric: str
+    actual_value: float
+    expected_value: float
+    variance_percent: float
+    risk_level: str = "medium"  # "low", "medium", "high"
+    explanation: str
+    suggested_action: str
+
+
+class BillingAnomalyReport(BaseModel):
+    period: str
+    anomalies_count: int
+    executive_summary: str
+    anomalies: List[AnomalyItem]
+    recommendations: List[str]

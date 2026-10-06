@@ -79,3 +79,32 @@ async def test_malformed_ai_quote_is_reported_and_not_saved(async_client: AsyncC
     assert "could not be validated" in response.json()["detail"]
     quotes = await async_client.get("/api/v1/quotes", headers=headers)
     assert quotes.status_code == 200 and quotes.json() == []
+
+
+class MismatchedMathProvider(FakeProvider):
+    def generate(self, prompt, system="", temperature=0.2, response_model=None, **kwargs):
+        # Model hallucinated 999999 as total_cents
+        return response_model.model_validate({
+            "title": "Website proposal",
+            "currency": "USD",
+            "line_items": [{"description": "Implementation", "quantity": 3, "unit_price_cents": 15000}],
+            "total_cents": 999999,
+            "terms": None,
+            "assumptions": [],
+        })
+
+
+@pytest.mark.asyncio
+async def test_ai_quote_draft_computes_total_with_decimal_when_model_total_differs(async_client: AsyncClient):
+    headers, card, lead = await _setup_lead_and_card(async_client, "math_fix")
+    app.dependency_overrides[get_llm_provider] = lambda: MismatchedMathProvider()
+
+    response = await async_client.post("/api/v1/quotes/draft", headers=headers, json={
+        "lead_id": lead["id"], "rate_card_id": card["id"],
+    })
+
+    assert response.status_code == 201
+    result = response.json()
+    # Correct code computed 3 * 15000 = 45000 with Decimal, ignoring model 999999
+    assert result["quote"]["total_cents"] == 45000
+

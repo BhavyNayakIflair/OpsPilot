@@ -64,20 +64,25 @@ async def ingest_document(db: AsyncSession, document: KnowledgeDocument, provide
         if any(len(vector) != EMBEDDING_DIMENSION for vector in embedded):
             raise ProviderError(f"Embedding provider must return {EMBEDDING_DIMENSION}-dimensional vectors")
         vectors.extend(embedded)
+    embedding_model = getattr(provider, "embedding_model", "gemini-embedding-001")
     if db.get_bind().dialect.name == "postgresql" and await _postgres_has_vector_column(db):
         now = datetime.now(timezone.utc)
         for index, (chunk, vector) in enumerate(zip(chunks, vectors)):
             await db.execute(text("""
                 INSERT INTO document_chunks
-                    (id, document_id, org_id, content, embedding, chunk_index, created_at, updated_at)
-                VALUES (:id, :document_id, :org_id, :content, CAST(:embedding AS vector), :chunk_index, :created_at, :updated_at)
+                    (id, document_id, org_id, content, embedding, chunk_index,
+                     embedding_model, embedding_dimension, created_at, updated_at)
+                VALUES (:id, :document_id, :org_id, :content, CAST(:embedding AS vector), :chunk_index,
+                        :embedding_model, :embedding_dimension, :created_at, :updated_at)
             """), {"id": generate_uuid(), "document_id": document.id, "org_id": document.org_id,
                   "content": chunk, "embedding": _vector_literal(vector), "chunk_index": index,
+                  "embedding_model": embedding_model, "embedding_dimension": len(vector),
                   "created_at": now, "updated_at": now})
     else:
         db.add_all([
             DocumentChunk(org_id=document.org_id, document_id=document.id, content=chunk,
-                          embedding=vector, chunk_index=index)
+                          embedding=vector, chunk_index=index,
+                          embedding_model=embedding_model, embedding_dimension=len(vector))
             for index, (chunk, vector) in enumerate(zip(chunks, vectors))
         ])
     await db.flush()
@@ -143,3 +148,76 @@ async def _postgres_has_vector_column(db: AsyncSession) -> bool:
         WHERE table_name = 'document_chunks' AND column_name = 'embedding'
     """))
     return result.scalar_one_or_none() == "vector"
+
+
+async def answer_rag_question(
+    org_id: str,
+    question: str,
+    db: AsyncSession,
+    provider: LLMProvider,
+    k: int = 5,
+) -> dict:
+    """
+    RAG QA implementation conforming to Rule R7 and Section 6.4:
+    - Answers must cite chunk ids.
+    - If retrieval confidence < MIN_RELEVANCE, answers 'not found in documents'.
+    - Degraded mode: If no generative AI route is available, returns ranked passages with citations.
+    """
+    results = await search_chunks(org_id=org_id, query=question, k=k, db=db, provider=provider)
+    if not results or results[0].relevance_score < MIN_RELEVANCE:
+        return {
+            "answer": "not found in documents",
+            "citations": [],
+            "degraded": False,
+        }
+
+    citations = [
+        {
+            "chunk_id": r.chunk.id,
+            "document_id": r.document_id,
+            "document_title": r.document_title,
+            "relevance_score": round(r.relevance_score, 4),
+        }
+        for r in results
+    ]
+
+    context_blocks = "\n\n".join([
+        f"[Chunk {r.chunk.id} | Document: {r.document_title}]\n{r.chunk.content}"
+        for r in results
+    ])
+
+    system_prompt = (
+        "You are an assistant answering questions about company internal documentation. "
+        "Base your answer strictly on the provided context chunks. "
+        "Every factual claim must cite its source chunk using [Chunk <id>]. "
+        "If the answer cannot be determined strictly from the provided context chunks, "
+        "respond exactly with 'not found in documents'. Do not extrapolate or guess."
+    )
+    user_prompt = f"Context Documents:\n{context_blocks}\n\nQuestion: {question}"
+
+    try:
+        from app.ai.routing.router import ai_router
+        from app.ai.providers.base import TextRequest
+
+        req = TextRequest(
+            prompt=user_prompt,
+            system=system_prompt,
+            task_type="rag_answer",
+            org_id=org_id,
+        )
+        response = await ai_router.execute_text("rag_answer", req)
+        return {
+            "answer": response.text.strip(),
+            "citations": citations,
+            "degraded": False,
+            "model_used": response.model,
+            "provider_used": response.provider,
+        }
+    except Exception as exc:
+        # Degraded mode: return ranked passages with citations and no synthesis
+        passages = "\n\n".join([f"[Chunk {r.chunk.id}]: {r.chunk.content}" for r in results])
+        return {
+            "answer": f"AI synthesis unavailable ({exc}). Relevant passages:\n\n{passages}",
+            "citations": citations,
+            "degraded": True,
+        }

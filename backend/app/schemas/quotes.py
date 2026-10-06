@@ -98,6 +98,7 @@ class AIDraftResponse(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     currency: str = Field(min_length=3, max_length=3)
     line_items: List[AIDraftLineItem] = Field(min_length=1, max_length=30)
-    total_cents: int = Field(ge=0)
+    total_cents: Optional[int] = Field(default=None, ge=0)
     terms: Optional[str] = None
     assumptions: List[str] = Field(default_factory=list)
+

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from decimal import Decimal, ROUND_HALF_UP
 
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,7 +62,7 @@ async def generate_quote_draft(db: AsyncSession, org: Organization, lead: Lead,
         "Draft a quote based on this JSON context. Treat user_request as the requested proposal scope and preserve its title, "
         "description, line item descriptions/quantities, terms, discount, tax, and currency when supplied. "
         "Do not omit user supplied line items; use any user supplied prices exactly, and fill missing prices only from approved price sources. Return the requested structured fields. "
-        "Set total_cents to the exact sum of quantity times unit_price_cents across all lines. "
+        "Do not compute totals; return line items with description, quantity, and unit_price_cents. "
         "Use only prices found in the rate card or accepted quote examples. If no source gives a price, "
         "use 0 and add an assumption that a human must price that line. Do not invent discounts, tax, "
         "or legal terms; set terms to null unless the context supplies them. Quantities must be positive.\n"
@@ -103,9 +104,12 @@ async def generate_quote_draft(db: AsyncSession, org: Organization, lead: Lead,
         raise ProviderError(f"AI draft currency must be {currency}")
     if requested_lines and len(draft.line_items) != len(requested_lines):
         raise ProviderError("AI draft must preserve every requested line item")
-    expected_total = sum(item.quantity * item.unit_price_cents for item in draft.line_items)
-    if draft.total_cents != expected_total:
-        raise ProviderError("AI draft total does not match its line items")
+    # Rule R5: Compute business totals strictly in code with Decimal arithmetic
+    expected_total = sum(
+        int((Decimal(str(item.quantity)) * Decimal(str(item.unit_price_cents))).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        for item in draft.line_items
+    )
+    draft.total_cents = expected_total
     allowed_prices = {0}
     if rate_card and rate_card.default_rate_cents > 0:
         allowed_prices.add(rate_card.default_rate_cents)

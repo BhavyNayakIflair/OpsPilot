@@ -1,8 +1,12 @@
+import asyncio
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.database import get_db
+from app.ai.jobs import job_manager
+from app.core.database import AsyncSessionLocal, get_db
 from app.core.deps import get_current_tenant
 from app.gateway.base import LLMProvider, ProviderError
 from app.gateway.factory import get_llm_provider
@@ -14,6 +18,116 @@ from app.services.quote_draft_service import generate_quote_draft
 from app.services.quote_write_service import persist_quote
 
 router = APIRouter()
+
+
+async def _run_quote_draft_job(
+    job_id: str,
+    org_id: str,
+    lead_id: str,
+    rate_card_id: Optional[str],
+    data_dict: dict,
+    provider: LLMProvider,
+):
+    async with AsyncSessionLocal() as session:
+        try:
+            await job_manager.update_job(job_id, status="running", progress=20, message="Loading lead context and pricing sources")
+            org = await session.scalar(select(Organization).where(Organization.id == org_id))
+            lead = await session.scalar(select(Lead).where(Lead.id == lead_id, Lead.org_id == org_id))
+            rate_card = await session.scalar(select(RateCard).where(RateCard.id == rate_card_id, RateCard.org_id == org_id)) if rate_card_id else None
+
+            await job_manager.update_job(job_id, status="running", progress=50, message="Executing AI multi-provider routing (bounded to <=25s)")
+            payload, assumptions, _evidence = await generate_quote_draft(
+                session, org, lead, rate_card, provider,
+                request=data_dict,
+            )
+
+            await job_manager.update_job(job_id, status="running", progress=85, message="Computing totals with Decimal and saving draft")
+            quote = await persist_quote(session, org, payload, status="draft")
+
+            await job_manager.update_job(
+                job_id,
+                status="completed",
+                progress=100,
+                message="Quote draft ready",
+                result={"quote": quote, "assumptions": assumptions},
+            )
+        except Exception as exc:
+            await job_manager.update_job(
+                job_id,
+                status="failed",
+                progress=100,
+                message=f"Drafting failed: {exc}",
+                error=str(exc),
+            )
+
+
+@router.post("/draft-async", status_code=202)
+async def draft_quote_async(
+    data: QuoteDraftRequest,
+    org: Organization = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+    provider: LLMProvider = Depends(get_llm_provider),
+):
+    lead = await _owned(db, Lead, data.lead_id, org.id)
+    if lead.status in ("won", "lost"):
+        raise HTTPException(status_code=409, detail="Quotes can only be drafted for open leads")
+    if data.rate_card_id:
+        rate_card = await _owned(db, RateCard, data.rate_card_id, org.id)
+    else:
+        rate_card = await db.scalar(
+            select(RateCard)
+            .where(RateCard.org_id == org.id, RateCard.currency == lead.currency.upper())
+            .order_by(RateCard.name)
+        )
+    currency = data.currency.upper() if data.currency else (rate_card.currency.upper() if rate_card else lead.currency.upper())
+    if rate_card and currency != rate_card.currency.upper():
+        raise HTTPException(status_code=422, detail="Quote currency must match its rate card")
+
+    job_id = await job_manager.create_job(meta={"org_id": org.id, "lead_id": lead.id})
+    request_data = {**data.model_dump(exclude={"lead_id", "rate_card_id"}), "currency": currency}
+
+    asyncio.create_task(
+        _run_quote_draft_job(
+            job_id=job_id,
+            org_id=org.id,
+            lead_id=lead.id,
+            rate_card_id=rate_card.id if rate_card else None,
+            data_dict=request_data,
+            provider=provider,
+        )
+    )
+
+    return {"job_id": job_id, "status": "queued", "message": "Quote drafting initiated in background"}
+
+
+@router.get("/draft-status/{job_id}")
+async def get_draft_job_status(job_id: str, org: Organization = Depends(get_current_tenant)):
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Draft job not found")
+    return job
+
+
+@router.get("/draft-status/{job_id}/events")
+async def get_draft_job_events(job_id: str, org: Organization = Depends(get_current_tenant)):
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Draft job not found")
+    return StreamingResponse(
+        job_manager.stream_job_events(job_id),
+        media_type="text/event-stream",
+    )
+
+
+@router.get("/{quote_id}/draft-status")
+async def get_quote_draft_status(
+    quote_id: str,
+    org: Organization = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    quote = await _owned(db, Quote, quote_id, org.id)
+    return {"quote_id": quote.id, "status": quote.status, "updated_at": quote.updated_at}
+
 
 
 async def _quote_out(db: AsyncSession, quote: Quote):

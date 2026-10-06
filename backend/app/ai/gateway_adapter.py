@@ -145,7 +145,7 @@ class LegacyGatewayAdapter(LLMProvider):
             if ai_settings.GEMINI_API_KEY:
                 gemini = get_provider_by_id("gemini")
                 if gemini:
-                    res = _run_async(gemini.embed(texts, task_type=task_type))
+                    res = _run_async(gemini.embed(texts))
                     return res.vectors
             from app.gateway.ollama_provider import OllamaProvider
             return OllamaProvider().embed(texts, task_type=task_type, org_id=org_id)

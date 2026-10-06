@@ -12,8 +12,23 @@ from app.models.membership import Membership, RoleType
 from app.models.crm import Company, Contact, Lead, PipelineStage
 from app.models.content import MigrationJob
 
+from app.schemas.migration import SuggestMappingRequest, SuggestMappingResponse
+from app.services.migration_service import suggest_column_mappings
+
 router = APIRouter()
 TARGETS = {"companies", "contacts", "leads"}
+
+
+@router.post("/suggest-mapping", response_model=SuggestMappingResponse)
+async def suggest_mapping(
+    data: SuggestMappingRequest,
+    org: Organization = Depends(get_current_tenant),
+):
+    if data.target not in TARGETS:
+        raise HTTPException(status_code=422, detail="Target must be companies, contacts, or leads")
+    if not data.headers:
+        raise HTTPException(status_code=422, detail="Headers list cannot be empty")
+    return await suggest_column_mappings(data, org_id=org.id)
 
 
 @router.get("/jobs")
