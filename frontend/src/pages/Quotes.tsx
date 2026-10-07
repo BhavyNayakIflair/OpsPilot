@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -24,6 +24,36 @@ type Quote = { id: string; title: string; status: string; currency: string; subt
 type QuoteDraft = { quote: { id: string; title: string; description?: string | null; lead_id: string; rate_card_id?: string; currency: string; discount_bps: number; tax_bps: number; terms?: string | null; line_items: { description: string; quantity: number; unit_price_cents: number }[] }; assumptions: string[] };
 type QuoteAgentRun = { id: string; status: string; result_data: { quote_id?: string; flags?: string[]; error?: string }; steps: { node_name: string; model: string; latency_ms: number; result_summary: string }[] };
 const field = 'field-control';
+
+/**
+ * Smoothly scrolls an element into view. `scrollIntoView` works with whichever ancestor actually scrolls
+ * (the app layout scrolls <main>, not the window, so window.scrollTo(...) had no effect).
+ */
+function scrollToElement(el: HTMLElement | null) {
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+const quoteStyles = `
+@keyframes quote-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes quote-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes quote-flash {
+  0% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(14, 165, 233, 0); }
+}
+.quote-rise { animation: quote-rise 520ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.quote-pop { animation: quote-pop 280ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.quote-flash { animation: quote-flash 1100ms ease-out 1; }
+@media (prefers-reduced-motion: reduce) {
+  .quote-rise, .quote-pop, .quote-flash { animation: none; }
+}
+`;
 
 export function Quotes() {
   const navigate = useNavigate();
@@ -54,11 +84,17 @@ export function Quotes() {
   const [aiAttempt, setAiAttempt] = useState<{ current: number; total: number }>({ current: 1, total: 3 });
   const [aiProvider, setAiProvider] = useState<string>('auto');
   const [aiModel, setAiModel] = useState<string>('');
+  const [editorFlash, setEditorFlash] = useState(false);
 
   const [search, setSearch] = useState('');
   const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({ status: '', currency: '' });
   const [sortKey, setSortKey] = useState<string | null>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>('desc');
+
+  // Scroll targets
+  const editorRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const pdfRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setError('');
@@ -78,6 +114,19 @@ export function Quotes() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
+
+  // When a PDF preview opens, bring it into view automatically (no manual scrolling to the bottom).
+  useEffect(() => {
+    if (!pdfUrl) return;
+    const id = requestAnimationFrame(() => scrollToElement(pdfRef.current));
+    return () => cancelAnimationFrame(id);
+  }, [pdfUrl]);
+
+  const scrollToEditor = useCallback(() => {
+    scrollToElement(editorRef.current);
+    setEditorFlash(true);
+    window.setTimeout(() => setEditorFlash(false), 1200);
+  }, []);
 
   const chooseCard = (id: string) => {
     setCardId(id);
@@ -342,7 +391,8 @@ export function Quotes() {
           price: (line.unit_price_cents / 100).toFixed(2),
         }))
       );
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Fix: scroll the editor into view (works with the layout's scrolling <main>).
+      scrollToEditor();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load quote for editing');
     }
@@ -359,7 +409,14 @@ export function Quotes() {
   };
 
   const scrollToForm = () => {
-    document.getElementById('quote-editor-form')?.scrollIntoView({ behavior: 'smooth' });
+    scrollToElement(editorRef.current);
+  };
+
+  const closePdf = () => {
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    setPdfUrl('');
+    // Return to the saved quotes list after closing the preview.
+    requestAnimationFrame(() => scrollToElement(listRef.current));
   };
 
   const formatCurrency = (amountCents: number, curr: string) => {
@@ -566,7 +623,7 @@ export function Quotes() {
       widthClass: 'min-w-[140px]',
       render: (row) => (
         <div className="flex flex-col items-end gap-1">
-          <span className="font-bold text-semantic-text">{formatCurrency(row.total_cents, row.currency)}</span>
+          <span className="font-bold tabular-nums text-semantic-text">{formatCurrency(row.total_cents, row.currency)}</span>
           <Badge variant={statusBadgeVariant(row.status)}>{row.status}</Badge>
         </div>
       ),
@@ -603,7 +660,7 @@ export function Quotes() {
   ];
 
   const aiDraftPreview = aiPreview ? (
-    <Card className="!bg-semantic-accent-soft dark:!bg-indigo-950/30 !border-semantic-accent/40">
+    <Card className="quote-pop !bg-semantic-accent-soft dark:!bg-indigo-950/30 !border-semantic-accent/40">
       <CardHeader className="!border-semantic-accent/20">
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-semantic-accent" />
@@ -632,7 +689,7 @@ export function Quotes() {
 
         <div>
           <div className="text-[11px] uppercase tracking-wider text-semantic-text-muted font-semibold mb-2">Line items</div>
-          <div className="rounded-ui-xl border border-semantic-accent/20 overflow-hidden">
+          <div className="rounded-ui-xl border border-semantic-accent/20 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-semantic-surface-muted/60 text-[11px] uppercase tracking-wider text-semantic-text-muted">
                 <tr>
@@ -646,11 +703,11 @@ export function Quotes() {
                 {aiPreview.quote.line_items.map((l, i) => {
                   const amt = l.quantity * l.unit_price_cents;
                   return (
-                    <tr key={i}>
+                    <tr key={i} className="transition-colors hover:bg-semantic-surface/50">
                       <td className="px-3 py-2 text-semantic-text">{l.description}</td>
                       <td className="px-3 py-2 text-right text-semantic-text">{l.quantity}</td>
-                      <td className="px-3 py-2 text-right text-semantic-text">{formatCurrency(l.unit_price_cents, aiPreview.quote.currency)}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-semantic-text">{formatCurrency(amt, aiPreview.quote.currency)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-semantic-text">{formatCurrency(l.unit_price_cents, aiPreview.quote.currency)}</td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums text-semantic-text">{formatCurrency(amt, aiPreview.quote.currency)}</td>
                     </tr>
                   );
                 })}
@@ -711,6 +768,8 @@ export function Quotes() {
 
   return (
     <div className="page-shell space-y-6">
+      <style>{quoteStyles}</style>
+
       <PageHeader
         eyebrow="Sales workspace"
         title="Quotes & Proposals"
@@ -740,291 +799,303 @@ export function Quotes() {
         </Alert>
       )}
 
-      <Card id="quote-editor-form">
-        <CardHeader>
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[.16em] text-semantic-accent">Quote editor</p>
-            <h2 className="mt-1 text-lg font-bold text-semantic-text">
-              {editingId ? 'Review AI draft' : 'Create a quote'}
-            </h2>
-            <p className="mt-1 text-sm text-semantic-text-muted">
-              Enter the proposal details and line items. Prices are entered per unit.
-            </p>
-          </div>
-          <Badge variant="muted">Draft</Badge>
-        </CardHeader>
+      {/* Editor (scroll target for Edit / empty-state "Create quote") */}
+      <div
+        id="quote-editor-form"
+        ref={editorRef}
+        className={cn('quote-rise scroll-mt-4 rounded-ui-2xl', editorFlash && 'quote-flash')}
+      >
+        <Card className="relative overflow-hidden">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500 opacity-80"
+          />
+          <CardHeader>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[.16em] text-semantic-accent">Quote editor</p>
+              <h2 className="mt-1 text-lg font-bold text-semantic-text">
+                {editingId ? 'Review AI draft' : 'Create a quote'}
+              </h2>
+              <p className="mt-1 text-sm text-semantic-text-muted">
+                Enter the proposal details and line items. Prices are entered per unit.
+              </p>
+            </div>
+            <Badge variant="muted">Draft</Badge>
+          </CardHeader>
 
-        {(showAiProgress || showAgentProgress || aiGatewayStatus !== 'idle') && (
-          <div className="px-5 sm:px-6 pt-4 pb-2 space-y-4">
-            {aiGatewayStatus !== 'idle' && (
-              <AIGatewayBanner
-                status={aiGatewayStatus}
-                attempt={aiAttempt}
-                providerName={aiProvider}
-                modelName={aiModel}
-                errorMessage={aiError}
-                onRetry={() => void draftWithAI()}
-              />
-            )}
-            {showAiProgress && (
-              <AIProgress
-                steps={aiSteps}
-                status={aiBusy ? 'running' : aiPreview ? 'success' : 'error'}
-                title={aiBusy ? 'Drafting with AI…' : aiPreview ? 'AI draft ready for review' : 'Draft failed'}
-                autoAdvanceMs={7000}
-                errorMessage={aiError || undefined}
-                onRetry={aiError ? () => void draftWithAI() : undefined}
-                resultPreview={aiDraftPreview}
-              />
-            )}
-            {showAgentProgress && (
-              <AIProgress
-                steps={agentSteps}
-                status={agentBusy ? 'running' : agentError ? 'error' : 'success'}
-                title={agentBusy ? 'Quote agent running…' : agentError ? 'Quote agent failed' : 'Quote agent complete'}
-                autoAdvanceMs={7000}
-                errorMessage={agentError || undefined}
-                onRetry={agentError ? () => void runQuoteAgent() : undefined}
-                resultPreview={agentResultBanner}
-              />
-            )}
-          </div>
-        )}
-
-        <CardContent>
-          {assumptions.length > 0 && (
-            <div className="mb-5 rounded-ui-xl border border-semantic-warning/30 bg-semantic-warning-soft p-4 text-sm text-semantic-warning">
-              <p className="font-semibold">AI assumptions — review before saving</p>
-              <ul className="mt-2 list-disc pl-5 space-y-0.5">
-                {assumptions.map((item, index) => <li key={index}>{item}</li>)}
-              </ul>
+          {(showAiProgress || showAgentProgress || aiGatewayStatus !== 'idle') && (
+            <div className="px-5 sm:px-6 pt-4 pb-2 space-y-4">
+              {aiGatewayStatus !== 'idle' && (
+                <AIGatewayBanner
+                  status={aiGatewayStatus}
+                  attempt={aiAttempt}
+                  providerName={aiProvider}
+                  modelName={aiModel}
+                  errorMessage={aiError}
+                  onRetry={() => void draftWithAI()}
+                />
+              )}
+              {showAiProgress && (
+                <AIProgress
+                  steps={aiSteps}
+                  status={aiBusy ? 'running' : aiPreview ? 'success' : 'error'}
+                  title={aiBusy ? 'Drafting with AI…' : aiPreview ? 'AI draft ready for review' : 'Draft failed'}
+                  autoAdvanceMs={7000}
+                  errorMessage={aiError || undefined}
+                  onRetry={aiError ? () => void draftWithAI() : undefined}
+                  resultPreview={aiDraftPreview}
+                />
+              )}
+              {showAgentProgress && (
+                <AIProgress
+                  steps={agentSteps}
+                  status={agentBusy ? 'running' : agentError ? 'error' : 'success'}
+                  title={agentBusy ? 'Quote agent running…' : agentError ? 'Quote agent failed' : 'Quote agent complete'}
+                  autoAdvanceMs={7000}
+                  errorMessage={agentError || undefined}
+                  onRetry={agentError ? () => void runQuoteAgent() : undefined}
+                  resultPreview={agentResultBanner}
+                />
+              )}
             </div>
           )}
 
-          <form onSubmit={(e) => void submit(e)} className="grid gap-4 md:grid-cols-2">
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Proposal title
-              <input
-                required
-                className={`${field} mt-1.5`}
-                placeholder="e.g. Website implementation"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-              />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted md:col-span-2">
-              Proposal description
-              <textarea
-                className={`${field} mt-1.5`}
-                rows={2}
-                placeholder="Describe the requested outcome and scope"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Link to lead
-              <select
-                className={`${field} mt-1.5`}
-                value={leadId}
-                onChange={(e) => setLeadId(e.target.value)}
-              >
-                <option value="">Choose a lead (optional)</option>
-                {leads.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
-              </select>
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Rate card
-              <select
-                className={`${field} mt-1.5`}
-                value={cardId}
-                onChange={(e) => chooseCard(e.target.value)}
-              >
-                <option value="">No rate card</option>
-                {cards.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.currency}</option>)}
-              </select>
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Currency
-              <select
-                className={`${field} mt-1.5`}
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-              >
-                <option>USD</option>
-                <option>EUR</option>
-                <option>INR</option>
-                <option>GBP</option>
-              </select>
-            </label>
-            <div className="space-y-3 md:col-span-2">
-              <p className="text-xs font-bold uppercase tracking-wider text-semantic-text-muted">Line items</p>
-              {lineItems.map((line, index) => (
-                <div
-                  key={index}
-                  className="grid items-end gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/40 p-3 sm:grid-cols-[2fr_120px_1fr_auto]"
-                >
-                  <label className="text-xs font-semibold text-semantic-text-muted">
-                    Description
-                    <input
-                      required
-                      className={`${field} mt-1.5`}
-                      placeholder="What are you quoting?"
-                      value={line.description}
-                      onChange={(e) =>
-                        setLineItems((items) =>
-                          items.map((item, i) =>
-                            i === index ? { ...item, description: e.target.value } : item
-                          )
-                        )
-                      }
-                    />
-                  </label>
-                  <label className="text-xs font-semibold text-semantic-text-muted">
-                    Quantity
-                    <input
-                      required
-                      min="1"
-                      type="number"
-                      className={`${field} mt-1.5`}
-                      aria-label={`Quantity for item ${index + 1}`}
-                      value={line.quantity}
-                      onChange={(e) =>
-                        setLineItems((items) =>
-                          items.map((item, i) =>
-                            i === index ? { ...item, quantity: e.target.value } : item
-                          )
-                        )
-                      }
-                    />
-                  </label>
-                  <label className="text-xs font-semibold text-semantic-text-muted">
-                    Unit price ({currency})
-                    <input
-                      required
-                      min="0"
-                      step="0.01"
-                      type="number"
-                      className={`${field} mt-1.5`}
-                      placeholder="0.00"
-                      value={line.price}
-                      onChange={(e) =>
-                        setLineItems((items) =>
-                          items.map((item, i) =>
-                            i === index ? { ...item, price: e.target.value } : item
-                          )
-                        )
-                      }
-                    />
-                  </label>
-                  {lineItems.length > 1 && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Remove item ${index + 1}`}
-                      className="text-semantic-danger hover:bg-semantic-danger-soft hover:text-semantic-danger"
-                      onClick={() =>
-                        setLineItems((items) => items.filter((_, i) => i !== index))
-                      }
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </div>
-              ))}
-              <div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-semantic-accent hover:bg-semantic-accent-soft"
-                  onClick={() =>
-                    setLineItems((items) => [...items, { description: '', quantity: '1', price: '' }])
-                  }
-                >
-                  + Add line item
-                </Button>
+          <CardContent>
+            {assumptions.length > 0 && (
+              <div className="quote-pop mb-5 rounded-ui-xl border border-semantic-warning/30 bg-semantic-warning-soft p-4 text-sm text-semantic-warning">
+                <p className="font-semibold">AI assumptions — review before saving</p>
+                <ul className="mt-2 list-disc pl-5 space-y-0.5">
+                  {assumptions.map((item, index) => <li key={index}>{item}</li>)}
+                </ul>
               </div>
-            </div>
-            <label className="text-xs text-semantic-text-muted">
-              Discount (%)
-              <input
-                min="0"
-                max="100"
-                step="0.01"
-                type="number"
-                className={`${field} mt-1`}
-                value={discount}
-                onChange={(e) => setDiscount(e.target.value)}
-              />
-            </label>
-            <label className="text-xs text-semantic-text-muted">
-              Tax (%)
-              <input
-                min="0"
-                max="100"
-                step="0.01"
-                type="number"
-                className={`${field} mt-1`}
-                value={tax}
-                onChange={(e) => setTax(e.target.value)}
-              />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted md:col-span-2">
-              Terms and notes
-              <textarea
-                className={`${field} mt-1.5`}
-                rows={3}
-                placeholder="Add payment terms or scope notes"
-                value={terms}
-                onChange={(e) => setTerms(e.target.value)}
-              />
-            </label>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-semantic-border pt-4 md:col-span-2">
-              <span className="text-xs text-semantic-text-muted">
-                Prices are saved in cents. AI output always requires human review.
-              </span>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="primary"
-                  loading={aiBusy}
-                  disabled={busy || agentBusy || !leadId}
-                  onClick={() => void draftWithAI()}
+            )}
+
+            <form onSubmit={(e) => void submit(e)} className="grid gap-4 md:grid-cols-2">
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Proposal title
+                <input
+                  required
+                  className={`${field} mt-1.5`}
+                  placeholder="e.g. Website implementation"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted md:col-span-2">
+                Proposal description
+                <textarea
+                  className={`${field} mt-1.5`}
+                  rows={2}
+                  placeholder="Describe the requested outcome and scope"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Link to lead
+                <select
+                  className={`${field} mt-1.5`}
+                  value={leadId}
+                  onChange={(e) => setLeadId(e.target.value)}
                 >
-                  {aiBusy ? 'Drafting…' : 'Draft with AI'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  loading={agentBusy}
-                  disabled={!leadId || aiBusy || busy}
-                  onClick={() => void runQuoteAgent()}
+                  <option value="">Choose a lead (optional)</option>
+                  {leads.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Rate card
+                <select
+                  className={`${field} mt-1.5`}
+                  value={cardId}
+                  onChange={(e) => chooseCard(e.target.value)}
                 >
-                  <Sparkles className="w-4 h-4" />
-                  {agentBusy ? 'Reviewing…' : 'Run quote agent'}
-                </Button>
-                {editingId && (
+                  <option value="">No rate card</option>
+                  {cards.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.currency}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Currency
+                <select
+                  className={`${field} mt-1.5`}
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                >
+                  <option>USD</option>
+                  <option>EUR</option>
+                  <option>INR</option>
+                  <option>GBP</option>
+                </select>
+              </label>
+              <div className="space-y-3 md:col-span-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-semantic-text-muted">Line items</p>
+                {lineItems.map((line, index) => (
+                  <div
+                    key={index}
+                    className="quote-pop grid items-end gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/40 p-3 transition-all duration-200 hover:border-semantic-accent/40 hover:bg-semantic-surface-muted/70 focus-within:border-semantic-accent/50 focus-within:shadow-ui-sm sm:grid-cols-[2fr_120px_1fr_auto]"
+                  >
+                    <label className="text-xs font-semibold text-semantic-text-muted">
+                      Description
+                      <input
+                        required
+                        className={`${field} mt-1.5`}
+                        placeholder="What are you quoting?"
+                        value={line.description}
+                        onChange={(e) =>
+                          setLineItems((items) =>
+                            items.map((item, i) =>
+                              i === index ? { ...item, description: e.target.value } : item
+                            )
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="text-xs font-semibold text-semantic-text-muted">
+                      Quantity
+                      <input
+                        required
+                        min="1"
+                        type="number"
+                        className={`${field} mt-1.5`}
+                        aria-label={`Quantity for item ${index + 1}`}
+                        value={line.quantity}
+                        onChange={(e) =>
+                          setLineItems((items) =>
+                            items.map((item, i) =>
+                              i === index ? { ...item, quantity: e.target.value } : item
+                            )
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="text-xs font-semibold text-semantic-text-muted">
+                      Unit price ({currency})
+                      <input
+                        required
+                        min="0"
+                        step="0.01"
+                        type="number"
+                        className={`${field} mt-1.5`}
+                        placeholder="0.00"
+                        value={line.price}
+                        onChange={(e) =>
+                          setLineItems((items) =>
+                            items.map((item, i) =>
+                              i === index ? { ...item, price: e.target.value } : item
+                            )
+                          )
+                        }
+                      />
+                    </label>
+                    {lineItems.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Remove item ${index + 1}`}
+                        className="text-semantic-danger hover:bg-semantic-danger-soft hover:text-semantic-danger"
+                        onClick={() =>
+                          setLineItems((items) => items.filter((_, i) => i !== index))
+                        }
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                <div>
                   <Button
                     type="button"
                     variant="ghost"
-                    disabled={busy}
-                    onClick={resetEditor}
+                    size="sm"
+                    className="text-semantic-accent hover:bg-semantic-accent-soft"
+                    onClick={() =>
+                      setLineItems((items) => [...items, { description: '', quantity: '1', price: '' }])
+                    }
                   >
-                    Cancel review
+                    + Add line item
                   </Button>
-                )}
-                <Button type="submit" variant="primary" loading={busy}>
-                  {busy ? 'Saving…' : editingId ? 'Save reviewed draft' : 'Create quote'}
-                </Button>
+                </div>
               </div>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+              <label className="text-xs text-semantic-text-muted">
+                Discount (%)
+                <input
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  type="number"
+                  className={`${field} mt-1`}
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                />
+              </label>
+              <label className="text-xs text-semantic-text-muted">
+                Tax (%)
+                <input
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  type="number"
+                  className={`${field} mt-1`}
+                  value={tax}
+                  onChange={(e) => setTax(e.target.value)}
+                />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted md:col-span-2">
+                Terms and notes
+                <textarea
+                  className={`${field} mt-1.5`}
+                  rows={3}
+                  placeholder="Add payment terms or scope notes"
+                  value={terms}
+                  onChange={(e) => setTerms(e.target.value)}
+                />
+              </label>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-semantic-border pt-4 md:col-span-2">
+                <span className="text-xs text-semantic-text-muted">
+                  Prices are saved in cents. AI output always requires human review.
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    loading={aiBusy}
+                    disabled={busy || agentBusy || !leadId}
+                    onClick={() => void draftWithAI()}
+                  >
+                    {aiBusy ? 'Drafting…' : 'Draft with AI'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    loading={agentBusy}
+                    disabled={!leadId || aiBusy || busy}
+                    onClick={() => void runQuoteAgent()}
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    {agentBusy ? 'Reviewing…' : 'Run quote agent'}
+                  </Button>
+                  {editingId && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={resetEditor}
+                    >
+                      Cancel review
+                    </Button>
+                  )}
+                  <Button type="submit" variant="primary" loading={busy}>
+                    {busy ? 'Saving…' : editingId ? 'Save reviewed draft' : 'Create quote'}
+                  </Button>
+                </div>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
 
-      <div className="space-y-3">
+      {/* Saved quotes */}
+      <div ref={listRef} className="quote-rise scroll-mt-4 space-y-3" style={{ animationDelay: '80ms' }}>
         <div className="flex items-end justify-between">
           <div>
             <h2 className="text-lg font-bold text-semantic-text">Saved quotes</h2>
@@ -1061,44 +1132,47 @@ export function Quotes() {
         />
       </div>
 
+      {/* PDF preview: auto-scrolled into view when opened */}
       {pdfUrl && (
-        <Card>
-          <CardHeader>
-            <h2 className="font-semibold text-semantic-text">PDF preview</h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                URL.revokeObjectURL(pdfUrl);
-                setPdfUrl('');
-              }}
-            >
-              Close preview
-            </Button>
-          </CardHeader>
-          <div className="px-0 pb-0">
-            <iframe
-              title="Quote PDF preview"
-              src={pdfUrl}
-              className="h-[640px] w-full border-t border-semantic-border"
-            />
-          </div>
-        </Card>
+        <div ref={pdfRef} className="quote-rise scroll-mt-4">
+          <Card className="overflow-hidden shadow-ui-lg ring-1 ring-semantic-accent/20">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-semantic-accent" />
+                <h2 className="font-semibold text-semantic-text">PDF preview</h2>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={closePdf}
+              >
+                Close preview
+              </Button>
+            </CardHeader>
+            <div className="px-0 pb-0">
+              <iframe
+                title="Quote PDF preview"
+                src={pdfUrl}
+                className="h-[70vh] min-h-[480px] w-full border-t border-semantic-border bg-semantic-surface-muted"
+              />
+            </div>
+          </Card>
+        </div>
       )}
 
-      <details className="group">
-        <summary className="cursor-pointer list-none rounded-ui-2xl border border-semantic-border bg-semantic-surface px-5 py-4 text-sm font-semibold text-semantic-text flex items-center justify-between">
+      <details className="group quote-rise" style={{ animationDelay: '140ms' }}>
+        <summary className="flex cursor-pointer list-none items-center justify-between rounded-ui-2xl border border-semantic-border bg-semantic-surface px-5 py-4 text-sm font-semibold text-semantic-text transition-all duration-200 hover:border-semantic-accent/40 hover:shadow-ui-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border [&::-webkit-details-marker]:hidden">
           <div className="flex items-center gap-2">
             <span>Manage rate cards</span>
             <span className="text-xs font-normal text-semantic-text-muted">
               {cards.length} available
             </span>
           </div>
-          <span className="text-xs text-semantic-text-muted group-open:rotate-180 transition-transform">
+          <span className="text-xs text-semantic-text-muted group-open:rotate-180 transition-transform duration-200">
             ▾
           </span>
         </summary>
-        <div className="mt-2">
+        <div className="quote-pop mt-2">
           <RateCardForm cards={cards} onCreated={async () => { await load(); }} />
         </div>
       </details>
@@ -1128,15 +1202,16 @@ export function QuoteAcceptance() {
     }
   };
   return (
-    <main className="flex min-h-screen items-center justify-center bg-semantic-surface-muted p-6">
-      <Card className="w-full max-w-lg text-center">
+    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-semantic-surface-muted via-semantic-surface to-semantic-accent-soft p-6">
+      <style>{quoteStyles}</style>
+      <Card className="quote-rise w-full max-w-lg text-center shadow-ui-lg">
         <CardContent className="pt-8">
           <div
             className={cn(
-              'mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full text-xl',
+              'quote-pop mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full text-xl ring-8 transition-colors',
               accepted
-                ? 'bg-semantic-success-soft text-semantic-success'
-                : 'bg-semantic-info-soft text-semantic-info'
+                ? 'bg-semantic-success-soft text-semantic-success ring-semantic-success-soft/50'
+                : 'bg-semantic-info-soft text-semantic-info ring-semantic-info-soft/50'
             )}
           >
             {accepted ? <CheckCircle2 className="w-6 h-6" /> : <ExternalLink className="w-6 h-6" />}
@@ -1222,7 +1297,7 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
       sortable: false,
       align: 'right',
       render: (r) => (
-        <span className="text-sm font-semibold text-semantic-text">
+        <span className="text-sm font-semibold tabular-nums text-semantic-text">
           {r.currency} {(r.default_rate_cents / 100).toFixed(2)} / hr
         </span>
       ),

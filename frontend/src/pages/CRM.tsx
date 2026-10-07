@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Building2, GripVertical, User } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -69,6 +70,67 @@ type Activity = {
 };
 type Tab = 'Pipeline' | 'Leads' | 'Companies' | 'Contacts' | 'Activities';
 
+/** Sorts a copy-safe array in place by key (dates and cent values are compared numerically). */
+function sortRows<T>(rows: T[], key: string, dir: 'asc' | 'desc'): T[] {
+  return rows.sort((a, b) => {
+    let av: unknown = (a as unknown as Record<string, unknown>)[key];
+    let bv: unknown = (b as unknown as Record<string, unknown>)[key];
+    if (key === 'created_at') {
+      av = new Date(av as string).getTime();
+      bv = new Date(bv as string).getTime();
+    }
+    if (key === 'value_cents') {
+      av = Number(av);
+      bv = Number(bv);
+    }
+    if (typeof av === 'string' && typeof bv === 'string') {
+      return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    }
+    const an = Number(av);
+    const bn = Number(bv);
+    return dir === 'asc' ? an - bn : bn - an;
+  });
+}
+
+/** "USD 12,000.00 · EUR 500.00" style total for a set of leads, or null when empty. */
+function formatTotals(rows: Lead[]): string | null {
+  const byCurrency = rows.reduce<Record<string, number>>((acc, lead) => {
+    acc[lead.currency] = (acc[lead.currency] || 0) + lead.value_cents;
+    return acc;
+  }, {});
+  const parts = Object.entries(byCurrency).map(
+    ([currency, cents]) =>
+      `${currency} ${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  );
+  return parts.length ? parts.join(' · ') : null;
+}
+
+const initialsOf = (text: string) =>
+  text
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join('') || '?';
+
+const FormCard = ({
+  title,
+  editing,
+  children,
+}: {
+  title: string;
+  editing: boolean;
+  children: React.ReactNode;
+}) => (
+  <Card className="overflow-hidden">
+    <div className="flex items-center justify-between gap-3 border-b border-semantic-border/60 bg-semantic-surface-muted/40 px-5 py-3">
+      <h3 className="text-sm font-bold text-semantic-text">{title}</h3>
+      {editing && <Badge variant="warning">Editing</Badge>}
+    </div>
+    <div className="p-5">{children}</div>
+  </Card>
+);
+
 export function CRM() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('Pipeline');
@@ -113,7 +175,12 @@ export function CRM() {
   const [contactSortDir, setContactSortDir] = useState<'asc' | 'desc'>('asc');
   const [activityKindFilter, setActivityKindFilter] = useState('');
   const [activityLeadFilter, setActivityLeadFilter] = useState('');
+  // Pipeline drag feedback (visual only)
+  const [dragOverStage, setDragOverStage] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
 
+  // Fix: this no longer depends on `activityLead`. Previously, picking a different lead in the
+  // Activities form recreated this callback and re-ran a full reload (skeleton flash, tab reset).
   const reload = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -130,13 +197,13 @@ export function CRM() {
       setStages(st);
       setLeads(ld);
       setActivities(ac);
-      if (!activityLead && ld[0]) setActivityLead(ld[0].id);
+      setActivityLead((current) => current || ld[0]?.id || '');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load CRM data');
     } finally {
       setLoading(false);
     }
-  }, [activityLead]);
+  }, []);
 
   useEffect(() => {
     void reload();
@@ -160,6 +227,11 @@ export function CRM() {
   );
   const stageLeads = (stage: Stage) =>
     leads.filter((lead) => lead.stage_id === stage.id);
+
+  const openPipelineLeads = leads.filter((l) => {
+    const s = stageById.get(l.stage_id || '');
+    return !(s?.is_won || s?.is_lost);
+  });
 
   const moveLead = async (leadId: string, stageId: string) => {
     const before = leads;
@@ -187,7 +259,7 @@ export function CRM() {
     }
   };
 
-  const saveLead = async (e: React.FormEvent) => {
+  const saveLead = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError('');
@@ -224,7 +296,7 @@ export function CRM() {
     }
   };
 
-  const saveActivity = async (e: React.FormEvent) => {
+  const saveActivity = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError('');
@@ -252,7 +324,7 @@ export function CRM() {
     }
   };
 
-  const saveCompany = async (e: React.FormEvent) => {
+  const saveCompany = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError('');
@@ -282,7 +354,7 @@ export function CRM() {
     }
   };
 
-  const saveContact = async (e: React.FormEvent) => {
+  const saveContact = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError('');
@@ -342,25 +414,7 @@ export function CRM() {
       else if (s === 'closed') rows = rows.filter((l) => stageById.get(l.stage_id || '')?.is_won || stageById.get(l.stage_id || '')?.is_lost);
       else rows = rows.filter((l) => !(stageById.get(l.stage_id || '')?.is_won || stageById.get(l.stage_id || '')?.is_lost));
     }
-    rows.sort((a, b) => {
-      let av: unknown = (a as Record<string, unknown>)[leadSortKey];
-      let bv: unknown = (b as Record<string, unknown>)[leadSortKey];
-      if (leadSortKey === 'created_at') {
-        av = new Date(av as string).getTime();
-        bv = new Date(bv as string).getTime();
-      }
-      if (leadSortKey === 'value_cents') {
-        av = Number(av);
-        bv = Number(bv);
-      }
-      if (typeof av === 'string' && typeof bv === 'string') {
-        return leadSortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-      }
-      const an = Number(av);
-      const bn = Number(bv);
-      return leadSortDir === 'asc' ? an - bn : bn - an;
-    });
-    return rows;
+    return sortRows(rows, leadSortKey, leadSortDir);
   }, [leads, leadSearch, leadFilters, leadSortKey, leadSortDir, companyNameById, stageById]);
 
   const filteredCompanies = useMemo(() => {
@@ -373,21 +427,7 @@ export function CRM() {
           (c.website || '').toLowerCase().includes(q)
       );
     }
-    rows.sort((a, b) => {
-      let av: unknown = (a as Record<string, unknown>)[companySortKey];
-      let bv: unknown = (b as Record<string, unknown>)[companySortKey];
-      if (companySortKey === 'created_at') {
-        av = new Date(av as string).getTime();
-        bv = new Date(bv as string).getTime();
-      }
-      if (typeof av === 'string' && typeof bv === 'string') {
-        return companySortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-      }
-      const an = Number(av);
-      const bn = Number(bv);
-      return companySortDir === 'asc' ? an - bn : bn - an;
-    });
-    return rows;
+    return sortRows(rows, companySortKey, companySortDir);
   }, [companies, companySearch, companySortKey, companySortDir]);
 
   const filteredContacts = useMemo(() => {
@@ -400,21 +440,7 @@ export function CRM() {
           (c.email || '').toLowerCase().includes(q)
       );
     }
-    rows.sort((a, b) => {
-      let av: unknown = (a as Record<string, unknown>)[contactSortKey];
-      let bv: unknown = (b as Record<string, unknown>)[contactSortKey];
-      if (contactSortKey === 'created_at') {
-        av = new Date(av as string).getTime();
-        bv = new Date(bv as string).getTime();
-      }
-      if (typeof av === 'string' && typeof bv === 'string') {
-        return contactSortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-      }
-      const an = Number(av);
-      const bn = Number(bv);
-      return contactSortDir === 'asc' ? an - bn : bn - an;
-    });
-    return rows;
+    return sortRows(rows, contactSortKey, contactSortDir);
   }, [contacts, contactSearch, contactSortKey, contactSortDir]);
 
   const filteredActivities = useMemo(() => {
@@ -463,11 +489,23 @@ export function CRM() {
     }
   };
 
+  // The app layout scrolls <main>, not the window, so window.scrollTo alone does nothing.
   const scrollToForm = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const main = document.querySelector('main');
+    if (main && main.scrollHeight > main.clientHeight) {
+      main.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
-  const tabs: Tab[] = ['Pipeline', 'Leads', 'Companies', 'Contacts', 'Activities'];
+  const tabs: { name: Tab; count: number }[] = [
+    { name: 'Pipeline', count: stages.length },
+    { name: 'Leads', count: leads.length },
+    { name: 'Companies', count: companies.length },
+    { name: 'Contacts', count: contacts.length },
+    { name: 'Activities', count: activities.length },
+  ];
 
   const leadColumns: DataTableColumn<Lead>[] = [
     {
@@ -487,7 +525,7 @@ export function CRM() {
       sortable: true,
       render: (l) => (
         <span className="text-semantic-text">
-          {companyNameById.get(l.company_id || '') || '\u2014'}
+          {companyNameById.get(l.company_id || '') || '—'}
         </span>
       ),
     },
@@ -498,7 +536,7 @@ export function CRM() {
       render: (l) => (
         <select
           aria-label={`Stage for ${l.title}`}
-          className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-2 py-1.5 min-w-[130px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+          className="min-w-[130px] rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-sm text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
           value={l.stage_id || ''}
           onChange={(e) => void moveLead(l.id, e.target.value)}
         >
@@ -518,7 +556,7 @@ export function CRM() {
         const c = contactById.get(l.contact_id || '');
         return (
           <span className="text-semantic-text">
-            {c ? `${c.first_name} ${c.last_name}` : '\u2014'}
+            {c ? `${c.first_name} ${c.last_name}` : '—'}
           </span>
         );
       },
@@ -529,7 +567,7 @@ export function CRM() {
       sortable: true,
       align: 'right',
       render: (l) => (
-        <span className="font-semibold text-semantic-text">
+        <span className="font-semibold tabular-nums text-semantic-text">
           {l.currency}{' '}
           {(l.value_cents / 100).toLocaleString(undefined, {
             minimumFractionDigits: 2,
@@ -542,7 +580,7 @@ export function CRM() {
       header: 'Created',
       sortable: true,
       render: (l) => (
-        <span className="text-semantic-text-muted text-xs">
+        <span className="text-xs text-semantic-text-muted">
           {new Date(l.created_at).toLocaleDateString()}
         </span>
       ),
@@ -552,7 +590,7 @@ export function CRM() {
       header: 'Actions',
       align: 'right',
       render: (l) => (
-        <div className="flex gap-2 justify-end whitespace-nowrap">
+        <div className="flex justify-end gap-2 whitespace-nowrap">
           <Button
             variant="ghost"
             size="sm"
@@ -561,6 +599,7 @@ export function CRM() {
               setLeadTitle(l.title);
               setLeadCompany(l.company_id || '');
               setLeadValue((l.value_cents / 100).toFixed(2));
+              scrollToForm();
             }}
           >
             Edit
@@ -584,20 +623,25 @@ export function CRM() {
       header: 'Name',
       sortable: true,
       render: (c) => (
-        <div>
-          <div className="font-bold text-semantic-text">{c.name}</div>
-          {c.website ? (
-            <a
-              href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-0.5 text-xs text-semantic-accent hover:underline"
-            >
-              {c.website}
-            </a>
-          ) : (
-            <div className="mt-0.5 text-xs text-semantic-text-muted">\u2014</div>
-          )}
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-ui-xl bg-semantic-accent-soft text-xs font-bold text-semantic-accent">
+            {initialsOf(c.name)}
+          </div>
+          <div className="min-w-0">
+            <div className="font-bold text-semantic-text">{c.name}</div>
+            {c.website ? (
+              <a
+                href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-0.5 text-xs text-semantic-accent hover:underline"
+              >
+                {c.website}
+              </a>
+            ) : (
+              <div className="mt-0.5 text-xs text-semantic-text-muted">—</div>
+            )}
+          </div>
         </div>
       ),
     },
@@ -606,7 +650,7 @@ export function CRM() {
       header: 'Industry',
       sortable: true,
       render: (c) => (
-        <span className="text-semantic-text">{c.industry || '\u2014'}</span>
+        <span className="text-semantic-text">{c.industry || '—'}</span>
       ),
     },
     {
@@ -623,7 +667,7 @@ export function CRM() {
       header: 'Created',
       sortable: true,
       render: (c) => (
-        <span className="text-semantic-text-muted text-xs">
+        <span className="text-xs text-semantic-text-muted">
           {new Date(c.created_at).toLocaleDateString()}
         </span>
       ),
@@ -633,7 +677,7 @@ export function CRM() {
       header: 'Actions',
       align: 'right',
       render: (c) => (
-        <div className="flex gap-2 justify-end whitespace-nowrap">
+        <div className="flex justify-end gap-2 whitespace-nowrap">
           <Button
             variant="ghost"
             size="sm"
@@ -643,6 +687,7 @@ export function CRM() {
               setCompanyWebsite(c.website || '');
               setCompanyIndustry(c.industry || '');
               setCompanyNotes(c.notes || '');
+              scrollToForm();
             }}
           >
             Edit
@@ -666,13 +711,18 @@ export function CRM() {
       header: 'Name',
       sortable: true,
       render: (c) => (
-        <div>
-          <div className="font-bold text-semantic-text">
-            {c.first_name} {c.last_name}
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 text-xs font-bold text-white">
+            {initialsOf(`${c.first_name} ${c.last_name}`)}
           </div>
-          {c.title && (
-            <div className="mt-0.5 text-xs text-semantic-text-muted">{c.title}</div>
-          )}
+          <div className="min-w-0">
+            <div className="font-bold text-semantic-text">
+              {c.first_name} {c.last_name}
+            </div>
+            {c.title && (
+              <div className="mt-0.5 text-xs text-semantic-text-muted">{c.title}</div>
+            )}
+          </div>
         </div>
       ),
     },
@@ -682,7 +732,7 @@ export function CRM() {
       sortable: true,
       render: (c) => (
         <span className="text-semantic-text">
-          {companyNameById.get(c.company_id || '') || '\u2014'}
+          {companyNameById.get(c.company_id || '') || '—'}
         </span>
       ),
     },
@@ -699,7 +749,7 @@ export function CRM() {
             {c.email}
           </a>
         ) : (
-          <span className="text-semantic-text-muted">\u2014</span>
+          <span className="text-semantic-text-muted">—</span>
         ),
     },
     {
@@ -707,7 +757,7 @@ export function CRM() {
       header: 'Phone',
       sortable: true,
       render: (c) => (
-        <span className="text-semantic-text">{c.phone || '\u2014'}</span>
+        <span className="text-semantic-text">{c.phone || '—'}</span>
       ),
     },
     {
@@ -715,7 +765,7 @@ export function CRM() {
       header: 'Created',
       sortable: true,
       render: (c) => (
-        <span className="text-semantic-text-muted text-xs">
+        <span className="text-xs text-semantic-text-muted">
           {new Date(c.created_at).toLocaleDateString()}
         </span>
       ),
@@ -725,7 +775,7 @@ export function CRM() {
       header: 'Actions',
       align: 'right',
       render: (c) => (
-        <div className="flex gap-2 justify-end whitespace-nowrap">
+        <div className="flex justify-end gap-2 whitespace-nowrap">
           <Button
             variant="ghost"
             size="sm"
@@ -737,6 +787,7 @@ export function CRM() {
               setContactPhone(c.phone || '');
               setContactTitle(c.title || '');
               setContactCompany(c.company_id || '');
+              scrollToForm();
             }}
           >
             Edit
@@ -780,6 +831,8 @@ export function CRM() {
     },
   ];
 
+  const openPipelineValue = formatTotals(openPipelineLeads);
+
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <PageHeader
@@ -810,212 +863,262 @@ export function CRM() {
         </div>
       ) : (
         <>
-          <div className="flex gap-1 border-b border-semantic-border">
-            {tabs.map((name) => (
+          {/* Tabs: scrollable on small screens, with live counts */}
+          <div
+            role="tablist"
+            aria-label="CRM sections"
+            className="flex gap-1 overflow-x-auto border-b border-semantic-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {tabs.map(({ name, count }) => (
               <button
                 key={name}
+                role="tab"
+                aria-selected={tab === name}
                 onClick={() => setTab(name)}
                 className={cn(
-                  'px-4 py-2.5 text-sm font-semibold transition-colors',
+                  '-mb-px flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold outline-none transition-colors focus-visible:ring-4 focus-visible:ring-semantic-border',
                   tab === name
-                    ? 'border-b-2 border-semantic-accent text-semantic-accent font-bold'
-                    : 'text-semantic-text-muted hover:text-semantic-text'
+                    ? 'border-semantic-accent font-bold text-semantic-accent'
+                    : 'border-transparent text-semantic-text-muted hover:text-semantic-text'
                 )}
               >
                 {name}
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+                    tab === name
+                      ? 'bg-semantic-accent-soft text-semantic-accent'
+                      : 'bg-semantic-surface-muted text-semantic-text-muted'
+                  )}
+                >
+                  {count}
+                </span>
               </button>
             ))}
           </div>
 
           {tab === 'Pipeline' && (
-            <div className="flex min-h-80 gap-4 overflow-x-auto pb-3">
-              {stages.map((stage) => {
-                const stageLeadsList = stageLeads(stage);
-                return (
-                  <section
-                    key={stage.id}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const id = e.dataTransfer.getData('text/plain');
-                      if (id) void moveLead(id, stage.id);
-                    }}
-                    className={cn(
-                      'min-w-64 flex-1 rounded-ui-2xl border p-3 flex flex-col',
-                      stage.is_won
-                        ? 'bg-semantic-success-soft/30 border-semantic-success/30'
-                        : stage.is_lost
-                        ? 'bg-semantic-danger-soft/30 border-semantic-danger/30'
-                        : 'bg-semantic-surface-muted/70 border-semantic-border'
-                    )}
-                  >
-                    <div className="mb-3 flex items-center justify-between">
-                      <h2 className="text-sm font-bold text-semantic-text">
-                        {stage.name}
-                        {stage.is_won && (
-                          <Badge variant="success" className="ml-2">
-                            Won
-                          </Badge>
-                        )}
-                        {stage.is_lost && (
-                          <Badge variant="danger" className="ml-2">
-                            Lost
-                          </Badge>
-                        )}
-                      </h2>
-                      <span className="rounded-full bg-semantic-surface px-2 py-0.5 text-xs text-semantic-text-muted">
-                        {stageLeadsList.length}
-                      </span>
-                    </div>
-                    <div className="space-y-2 flex-1">
-                      {stageLeadsList.map((lead) => {
-                        const contact = contactById.get(lead.contact_id || '');
-                        const contactName = contact
-                          ? `${contact.first_name} ${contact.last_name}`
-                          : 'No contact';
-                        return (
-                          <article
-                            key={lead.id}
-                            draggable
-                            onDragStart={(e) =>
-                              e.dataTransfer.setData('text/plain', lead.id)
-                            }
-                            className={cn(
-                              'cursor-grab rounded-ui-xl border bg-semantic-surface p-3 shadow-sm active:cursor-grabbing overflow-hidden',
-                              stage.is_won
-                                ? 'border-t-2 border-t-semantic-success border-semantic-success/30'
-                                : stage.is_lost
-                                ? 'border-t-2 border-t-semantic-danger border-semantic-danger/30'
-                                : 'border-semantic-border border-t-2 border-t-transparent'
-                            )}
-                          >
-                            <div className="font-semibold text-semantic-text">
-                              {lead.title}
-                            </div>
-                            <div className="mt-1 text-xs text-semantic-text-muted">
-                              {companyNameById.get(lead.company_id || '') ||
-                                'No company'}
-                            </div>
-                            <div className="mt-1 text-xs text-semantic-text-muted">
-                              {contactName}
-                            </div>
-                            <div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-semantic-text-subtle">
-                              via {lead.source}
-                            </div>
-                            <div className="mt-2 flex items-center justify-between">
-                              <div className="text-xs font-medium text-semantic-accent">
-                                {lead.currency}{' '}
-                                {(lead.value_cents / 100).toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                })}
-                              </div>
-                              <div className="text-[10px] text-semantic-text-muted">
-                                {new Date(lead.created_at).toLocaleDateString()}
-                              </div>
-                            </div>
-                          </article>
-                        );
-                      })}
-                      {!stageLeadsList.length && (
-                        <div className="py-6 text-center text-xs text-semantic-text-muted">
-                          No leads here
-                        </div>
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-semantic-text-muted">
+                <span>
+                  <span className="font-bold text-semantic-text">{openPipelineLeads.length}</span> open{' '}
+                  {openPipelineLeads.length === 1 ? 'lead' : 'leads'}
+                  {openPipelineValue && (
+                    <>
+                      {' '}
+                      · <span className="font-bold tabular-nums text-semantic-text">{openPipelineValue}</span> in play
+                    </>
+                  )}
+                </span>
+                <span className="hidden sm:inline">Drag a card to another stage to move it</span>
+              </div>
+
+              <div className="flex min-h-80 gap-4 overflow-x-auto pb-3">
+                {stages.map((stage) => {
+                  const stageLeadsList = stageLeads(stage);
+                  const stageTotal = formatTotals(stageLeadsList);
+                  return (
+                    <section
+                      key={stage.id}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        if (dragOverStage !== stage.id) setDragOverStage(stage.id);
+                      }}
+                      onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                          setDragOverStage((current) => (current === stage.id ? null : current));
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setDragOverStage(null);
+                        const id = e.dataTransfer.getData('text/plain');
+                        if (id) void moveLead(id, stage.id);
+                      }}
+                      className={cn(
+                        'flex min-w-64 flex-1 flex-col rounded-ui-2xl border p-3 transition-all duration-150',
+                        stage.is_won
+                          ? 'border-semantic-success/30 bg-semantic-success-soft/30'
+                          : stage.is_lost
+                          ? 'border-semantic-danger/30 bg-semantic-danger-soft/30'
+                          : 'border-semantic-border bg-semantic-surface-muted/70',
+                        dragOverStage === stage.id && 'ring-2 ring-semantic-accent/60 ring-offset-2 ring-offset-transparent'
                       )}
-                    </div>
-                  </section>
-                );
-              })}
-              {!stages.length && (
-                <EmptyState
-                  title="No pipeline stages"
-                  description="Define sales stages to start building your pipeline."
-                />
-              )}
+                    >
+                      <div className="mb-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <h2 className="flex min-w-0 items-center gap-2 text-sm font-bold text-semantic-text">
+                            <span
+                              className={cn(
+                                'h-2.5 w-2.5 shrink-0 rounded-full',
+                                stage.is_won ? 'bg-emerald-500' : stage.is_lost ? 'bg-rose-500' : 'bg-sky-500'
+                              )}
+                            />
+                            <span className="truncate">{stage.name}</span>
+                            {stage.is_won && <Badge variant="success">Won</Badge>}
+                            {stage.is_lost && <Badge variant="danger">Lost</Badge>}
+                          </h2>
+                          <span className="shrink-0 rounded-full bg-semantic-surface px-2 py-0.5 text-xs font-semibold tabular-nums text-semantic-text-muted">
+                            {stageLeadsList.length}
+                          </span>
+                        </div>
+                        <div className="mt-1 min-h-[16px] pl-[18px] text-[11px] font-medium tabular-nums text-semantic-text-muted">
+                          {stageTotal || ' '}
+                        </div>
+                      </div>
+
+                      <div className="flex-1 space-y-2">
+                        {stageLeadsList.map((lead) => {
+                          const contact = contactById.get(lead.contact_id || '');
+                          const contactName = contact
+                            ? `${contact.first_name} ${contact.last_name}`
+                            : 'No contact';
+                          const companyLabel =
+                            companyNameById.get(lead.company_id || '') || 'No company';
+                          return (
+                            <article
+                              key={lead.id}
+                              draggable
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData('text/plain', lead.id);
+                                setDraggingId(lead.id);
+                              }}
+                              onDragEnd={() => {
+                                setDraggingId(null);
+                                setDragOverStage(null);
+                              }}
+                              className={cn(
+                                'group cursor-grab overflow-hidden rounded-ui-xl border border-t-2 bg-semantic-surface p-3 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-ui-lg active:cursor-grabbing',
+                                draggingId === lead.id && 'opacity-50',
+                                stage.is_won
+                                  ? 'border-semantic-success/30 border-t-semantic-success'
+                                  : stage.is_lost
+                                  ? 'border-semantic-danger/30 border-t-semantic-danger'
+                                  : 'border-semantic-border border-t-transparent hover:border-t-semantic-accent'
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 font-semibold text-semantic-text">
+                                  {lead.title}
+                                </div>
+                                <GripVertical className="h-4 w-4 shrink-0 text-semantic-text-subtle opacity-0 transition-opacity group-hover:opacity-100" />
+                              </div>
+                              <div className="mt-2 flex items-center gap-1.5 text-xs text-semantic-text-muted">
+                                <Building2 className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{companyLabel}</span>
+                              </div>
+                              <div className="mt-1 flex items-center gap-1.5 text-xs text-semantic-text-muted">
+                                <User className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{contactName}</span>
+                              </div>
+                              <div className="mt-2 text-[10px] font-semibold uppercase tracking-wider text-semantic-text-subtle">
+                                via {lead.source}
+                              </div>
+                              <div className="mt-2 flex items-center justify-between border-t border-semantic-border/60 pt-2">
+                                <div className="text-xs font-bold tabular-nums text-semantic-accent">
+                                  {lead.currency}{' '}
+                                  {(lead.value_cents / 100).toLocaleString(undefined, {
+                                    minimumFractionDigits: 2,
+                                  })}
+                                </div>
+                                <div className="text-[10px] text-semantic-text-muted">
+                                  {new Date(lead.created_at).toLocaleDateString()}
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
+                        {!stageLeadsList.length && (
+                          <div className="rounded-ui-xl border border-dashed border-semantic-border py-6 text-center text-xs text-semantic-text-muted">
+                            No leads here
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+                {!stages.length && (
+                  <EmptyState
+                    title="No pipeline stages"
+                    description="Define sales stages to start building your pipeline."
+                  />
+                )}
+              </div>
             </div>
           )}
 
           {tab === 'Leads' && (
             <div className="space-y-4">
-              <Card>
-                <div className="p-5">
-                  <form
-                    onSubmit={(e) => void saveLead(e)}
-                    className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] items-end"
-                  >
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Opportunity name
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        required
-                        placeholder="e.g. Customer portal redesign"
-                        value={leadTitle}
-                        onChange={(e) => setLeadTitle(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Company
-                      <select
-                        className={cn(fieldControl, 'mt-1.5')}
-                        value={leadCompany}
-                        onChange={(e) => setLeadCompany(e.target.value)}
-                      >
-                        <option value="">No company</option>
-                        {companies.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Estimated value (USD)
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={leadValue}
-                        onChange={(e) => setLeadValue(e.target.value)}
-                      />
-                    </label>
-                    <div className="flex items-end gap-2">
+              <FormCard title={editingLead ? 'Edit lead' : 'New lead'} editing={!!editingLead}>
+                <form
+                  onSubmit={(e) => void saveLead(e)}
+                  className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_auto]"
+                >
+                  <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2 lg:col-span-1">
+                    Opportunity name
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      required
+                      placeholder="e.g. Customer portal redesign"
+                      value={leadTitle}
+                      onChange={(e) => setLeadTitle(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Company
+                    <select
+                      className={cn(fieldControl, 'mt-1.5')}
+                      value={leadCompany}
+                      onChange={(e) => setLeadCompany(e.target.value)}
+                    >
+                      <option value="">No company</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Estimated value (USD)
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={leadValue}
+                      onChange={(e) => setLeadValue(e.target.value)}
+                    />
+                  </label>
+                  <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-1">
+                    <Button type="submit" variant="primary" loading={saving}>
+                      {saving ? 'Saving…' : editingLead ? 'Save changes' : 'Add lead'}
+                    </Button>
+                    {editingLead && (
                       <Button
-                        type="submit"
-                        variant="primary"
-                        loading={saving}
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          setEditingLead(null);
+                          setLeadTitle('');
+                          setLeadCompany('');
+                          setLeadValue('');
+                        }}
                       >
-                        {saving
-                          ? 'Saving\u2026'
-                          : editingLead
-                          ? 'Save changes'
-                          : 'Add lead'}
+                        Cancel
                       </Button>
-                      {editingLead && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => {
-                            setEditingLead(null);
-                            setLeadTitle('');
-                            setLeadCompany('');
-                            setLeadValue('');
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </form>
-                </div>
-              </Card>
+                    )}
+                  </div>
+                </form>
+              </FormCard>
 
               <DataTable<Lead>
                 columns={leadColumns}
                 rows={filteredLeads}
                 rowKey={(l) => l.id}
                 searchable
-                searchPlaceholder="Search leads by title/company/source\u2026"
+                searchPlaceholder="Search leads by title/company/source…"
                 searchValue={leadSearch}
                 onSearchChange={setLeadSearch}
                 filters={leadFiltersDef}
@@ -1044,84 +1147,78 @@ export function CRM() {
 
           {tab === 'Companies' && (
             <div className="space-y-4">
-              <Card>
-                <div className="p-5">
-                  <form
-                    onSubmit={(e) => void saveCompany(e)}
-                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 items-end"
-                  >
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Company name
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        required
-                        placeholder="e.g. Acme Studio"
-                        value={companyName}
-                        onChange={(e) => setCompanyName(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Website
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        placeholder="acme.com"
-                        value={companyWebsite}
-                        onChange={(e) => setCompanyWebsite(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Industry
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        placeholder="SaaS, Finance, etc."
-                        value={companyIndustry}
-                        onChange={(e) => setCompanyIndustry(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2 lg:col-span-4">
-                      Notes
-                      <textarea
-                        className={cn(fieldControl, 'mt-1.5')}
-                        rows={2}
-                        placeholder="Additional notes about this company"
-                        value={companyNotes}
-                        onChange={(e) => setCompanyNotes(e.target.value)}
-                      />
-                    </label>
-                    <div className="sm:col-span-2 lg:col-span-4 flex items-end gap-2">
+              <FormCard title={editingCompany ? 'Edit company' : 'New company'} editing={!!editingCompany}>
+                <form
+                  onSubmit={(e) => void saveCompany(e)}
+                  className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4"
+                >
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Company name
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      required
+                      placeholder="e.g. Acme Studio"
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Website
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      placeholder="acme.com"
+                      value={companyWebsite}
+                      onChange={(e) => setCompanyWebsite(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2">
+                    Industry
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      placeholder="SaaS, Finance, etc."
+                      value={companyIndustry}
+                      onChange={(e) => setCompanyIndustry(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2 lg:col-span-4">
+                    Notes
+                    <textarea
+                      className={cn(fieldControl, 'mt-1.5')}
+                      rows={2}
+                      placeholder="Additional notes about this company"
+                      value={companyNotes}
+                      onChange={(e) => setCompanyNotes(e.target.value)}
+                    />
+                  </label>
+                  <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-4">
+                    <Button type="submit" variant="primary" loading={saving}>
+                      {editingCompany ? 'Save changes' : 'Add company'}
+                    </Button>
+                    {editingCompany && (
                       <Button
-                        type="submit"
-                        variant="primary"
-                        loading={saving}
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          setEditingCompany(null);
+                          setCompanyName('');
+                          setCompanyWebsite('');
+                          setCompanyIndustry('');
+                          setCompanyNotes('');
+                        }}
                       >
-                        {editingCompany ? 'Save changes' : 'Add company'}
+                        Cancel
                       </Button>
-                      {editingCompany && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => {
-                            setEditingCompany(null);
-                            setCompanyName('');
-                            setCompanyWebsite('');
-                            setCompanyIndustry('');
-                            setCompanyNotes('');
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </form>
-                </div>
-              </Card>
+                    )}
+                  </div>
+                </form>
+              </FormCard>
 
               <DataTable<Company>
                 columns={companyColumns}
                 rows={filteredCompanies}
                 rowKey={(c) => c.id}
                 searchable
-                searchPlaceholder="Search companies by name/website\u2026"
+                searchPlaceholder="Search companies by name/website…"
                 searchValue={companySearch}
                 onSearchChange={setCompanySearch}
                 sortable
@@ -1145,112 +1242,106 @@ export function CRM() {
 
           {tab === 'Contacts' && (
             <div className="space-y-4">
-              <Card>
-                <div className="p-5">
-                  <form
-                    onSubmit={(e) => void saveContact(e)}
-                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6 items-end"
-                  >
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      First name
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        required
-                        placeholder="First name"
-                        value={contactFirst}
-                        onChange={(e) => setContactFirst(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Last name
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        required
-                        placeholder="Last name"
-                        value={contactLast}
-                        onChange={(e) => setContactLast(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Email
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        type="email"
-                        placeholder="name@company.com"
-                        value={contactEmail}
-                        onChange={(e) => setContactEmail(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Phone
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        type="tel"
-                        placeholder="+1 555 000 0000"
-                        value={contactPhone}
-                        onChange={(e) => setContactPhone(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Title
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        placeholder="Job role, e.g. VP of Sales"
-                        value={contactTitle}
-                        onChange={(e) => setContactTitle(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Company
-                      <select
-                        className={cn(fieldControl, 'mt-1.5')}
-                        value={contactCompany}
-                        onChange={(e) => setContactCompany(e.target.value)}
-                      >
-                        <option value="">No company</option>
-                        {companies.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="sm:col-span-2 lg:col-span-6 flex items-end gap-2">
+              <FormCard title={editingContact ? 'Edit contact' : 'New contact'} editing={!!editingContact}>
+                <form
+                  onSubmit={(e) => void saveContact(e)}
+                  className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-6"
+                >
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    First name
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      required
+                      placeholder="First name"
+                      value={contactFirst}
+                      onChange={(e) => setContactFirst(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Last name
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      required
+                      placeholder="Last name"
+                      value={contactLast}
+                      onChange={(e) => setContactLast(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Email
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      type="email"
+                      placeholder="name@company.com"
+                      value={contactEmail}
+                      onChange={(e) => setContactEmail(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Phone
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      type="tel"
+                      placeholder="+1 555 000 0000"
+                      value={contactPhone}
+                      onChange={(e) => setContactPhone(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Title
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      placeholder="Job role, e.g. VP of Sales"
+                      value={contactTitle}
+                      onChange={(e) => setContactTitle(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Company
+                    <select
+                      className={cn(fieldControl, 'mt-1.5')}
+                      value={contactCompany}
+                      onChange={(e) => setContactCompany(e.target.value)}
+                    >
+                      <option value="">No company</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-6">
+                    <Button type="submit" variant="primary" loading={saving}>
+                      {editingContact ? 'Save contact' : 'Add contact'}
+                    </Button>
+                    {editingContact && (
                       <Button
-                        type="submit"
-                        variant="primary"
-                        loading={saving}
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          setEditingContact(null);
+                          setContactFirst('');
+                          setContactLast('');
+                          setContactEmail('');
+                          setContactPhone('');
+                          setContactTitle('');
+                          setContactCompany('');
+                        }}
                       >
-                        {editingContact ? 'Save contact' : 'Add contact'}
+                        Cancel
                       </Button>
-                      {editingContact && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => {
-                            setEditingContact(null);
-                            setContactFirst('');
-                            setContactLast('');
-                            setContactEmail('');
-                            setContactPhone('');
-                            setContactTitle('');
-                            setContactCompany('');
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </form>
-                </div>
-              </Card>
+                    )}
+                  </div>
+                </form>
+              </FormCard>
 
               <DataTable<Contact>
                 columns={contactColumns}
                 rows={filteredContacts}
                 rowKey={(c) => c.id}
                 searchable
-                searchPlaceholder="Search contacts by name/email\u2026"
+                searchPlaceholder="Search contacts by name/email…"
                 searchValue={contactSearch}
                 onSearchChange={setContactSearch}
                 sortable
@@ -1274,99 +1365,97 @@ export function CRM() {
 
           {tab === 'Activities' && (
             <div className="space-y-4">
-              <Card>
-                <div className="p-5">
-                  <form
-                    onSubmit={(e) => void saveActivity(e)}
-                    className="grid gap-3 sm:grid-cols-2"
-                  >
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Related lead
-                      <select
-                        className={cn(fieldControl, 'mt-1.5')}
-                        required
-                        value={activityLead}
-                        onChange={(e) => setActivityLead(e.target.value)}
-                      >
-                        {leads.map((lead) => (
-                          <option key={lead.id} value={lead.id}>
-                            {lead.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Activity type
-                      <select
-                        className={cn(fieldControl, 'mt-1.5')}
-                        value={activityKind}
-                        onChange={(e) => setActivityKind(e.target.value)}
-                      >
-                        <option value="note">Note</option>
-                        <option value="call">Call</option>
-                        <option value="email">Email</option>
-                        <option value="meeting">Meeting</option>
-                        <option value="task">Task</option>
-                      </select>
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2">
-                      Subject
-                      <input
-                        className={cn(fieldControl, 'mt-1.5')}
-                        required
-                        placeholder="e.g. Follow up on proposal"
-                        value={activitySubject}
-                        onChange={(e) => setActivitySubject(e.target.value)}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2">
-                      Details
-                      <textarea
-                        className={cn(fieldControl, 'mt-1.5')}
-                        rows={3}
-                        placeholder="Add notes from this interaction"
-                        value={activityBody}
-                        onChange={(e) => setActivityBody(e.target.value)}
-                      />
-                    </label>
-                    <div className="flex items-center gap-2 sm:col-span-2">
+              <FormCard title={editingActivity ? 'Edit activity' : 'Log activity'} editing={!!editingActivity}>
+                <form
+                  onSubmit={(e) => void saveActivity(e)}
+                  className="grid gap-3 sm:grid-cols-2"
+                >
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Related lead
+                    <select
+                      className={cn(fieldControl, 'mt-1.5')}
+                      required
+                      value={activityLead}
+                      onChange={(e) => setActivityLead(e.target.value)}
+                    >
+                      {leads.map((lead) => (
+                        <option key={lead.id} value={lead.id}>
+                          {lead.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Activity type
+                    <select
+                      className={cn(fieldControl, 'mt-1.5')}
+                      value={activityKind}
+                      onChange={(e) => setActivityKind(e.target.value)}
+                    >
+                      <option value="note">Note</option>
+                      <option value="call">Call</option>
+                      <option value="email">Email</option>
+                      <option value="meeting">Meeting</option>
+                      <option value="task">Task</option>
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2">
+                    Subject
+                    <input
+                      className={cn(fieldControl, 'mt-1.5')}
+                      required
+                      placeholder="e.g. Follow up on proposal"
+                      value={activitySubject}
+                      onChange={(e) => setActivitySubject(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2">
+                    Details
+                    <textarea
+                      className={cn(fieldControl, 'mt-1.5')}
+                      rows={3}
+                      placeholder="Add notes from this interaction"
+                      value={activityBody}
+                      onChange={(e) => setActivityBody(e.target.value)}
+                    />
+                  </label>
+                  <div className="flex items-center gap-2 sm:col-span-2">
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      loading={saving}
+                      disabled={!leads.length}
+                    >
+                      {editingActivity ? 'Save changes' : 'Add activity'}
+                    </Button>
+                    {editingActivity && (
                       <Button
-                        type="submit"
-                        variant="primary"
-                        loading={saving}
-                        disabled={!leads.length}
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          setEditingActivity(null);
+                          setActivitySubject('');
+                          setActivityBody('');
+                        }}
                       >
-                        {editingActivity ? 'Save changes' : 'Add activity'}
+                        Cancel
                       </Button>
-                      {editingActivity && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => {
-                            setEditingActivity(null);
-                            setActivitySubject('');
-                            setActivityBody('');
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </form>
-                </div>
-              </Card>
+                    )}
+                  </div>
+                </form>
+              </FormCard>
 
               <Card>
                 <div className="p-5">
-                  <div className="flex flex-wrap items-end gap-3 mb-4 pb-4 border-b border-semantic-border/60">
+                  <div className="mb-4 flex flex-wrap items-end gap-3 border-b border-semantic-border/60 pb-4">
                     <div className="flex flex-col gap-1">
-                      <label className="text-[11px] uppercase tracking-wider text-semantic-text-muted font-medium">
+                      <label className="text-[11px] font-medium uppercase tracking-wider text-semantic-text-muted">
                         Kind
                       </label>
                       <select
                         value={activityKindFilter}
                         onChange={(e) => setActivityKindFilter(e.target.value)}
-                        className="appearance-none rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 pr-8 min-w-[140px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+                        className="min-w-[140px] appearance-none rounded-ui-lg border border-semantic-border bg-semantic-surface px-3 py-1.5 pr-8 text-sm text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
                       >
                         <option value="">All</option>
                         <option value="note">Note</option>
@@ -1377,13 +1466,13 @@ export function CRM() {
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">
-                      <label className="text-[11px] uppercase tracking-wider text-semantic-text-muted font-medium">
+                      <label className="text-[11px] font-medium uppercase tracking-wider text-semantic-text-muted">
                         Lead
                       </label>
                       <select
                         value={activityLeadFilter}
                         onChange={(e) => setActivityLeadFilter(e.target.value)}
-                        className="appearance-none rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 pr-8 min-w-[180px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+                        className="min-w-[180px] appearance-none rounded-ui-lg border border-semantic-border bg-semantic-surface px-3 py-1.5 pr-8 text-sm text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
                       >
                         <option value="">All leads</option>
                         {leads.map((l) => (
@@ -1408,7 +1497,7 @@ export function CRM() {
                         return (
                           <Card
                             key={activity.id}
-                            className="shadow-ui-sm"
+                            className="shadow-ui-sm transition-shadow hover:shadow-ui-lg"
                           >
                             <div className="p-5">
                               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1423,7 +1512,7 @@ export function CRM() {
                                       ) : (
                                         <Badge variant="muted">
                                           User {activity.user_id.slice(0, 6)}
-                                          {'\u2026'}
+                                          …
                                         </Badge>
                                       ))}
                                   </div>
@@ -1431,7 +1520,7 @@ export function CRM() {
                                     {activity.subject}
                                   </h3>
                                 </div>
-                                <div className="flex shrink-0 items-center gap-3 text-right">
+                                <div className="flex shrink-0 flex-wrap items-center gap-3 sm:text-right">
                                   <div>
                                     <div className="text-xs font-semibold text-semantic-text">
                                       {lead?.title || 'Lead'}
@@ -1452,6 +1541,7 @@ export function CRM() {
                                         setActivityKind(activity.kind);
                                         setActivitySubject(activity.subject);
                                         setActivityBody(activity.body || '');
+                                        scrollToForm();
                                       }}
                                     >
                                       Edit
