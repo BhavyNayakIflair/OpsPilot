@@ -1,0 +1,6 @@
+title,company,value_cents,currency,source,notes
+Kubernetes Cloud Migration & SRE Retainer,Apex Cloud Innovations,4500000,USD,odoo_export,12-month cloud migration and SRE support contract
+HIPAA Patient Portal Refactor,Starlight Healthcare Systems,8500000,USD,odoo_export,Full revamp of React patient intake portal and EHR integration
+Core Banking Security Audit & Pen Test,BlueWave Financial Group,3200000,USD,referral,Quarterly SOC2 and ISO27001 readiness review
+Autonomous Drone Fleet Telemetry Dashboard,Cyberdyne Robotics Labs,12000000,USD,inbound,High-value pilot project for real-time telemetry streaming
+E-commerce Checkout Microservice Re-architecture,Quantum Retail Analytics,2800000,USD,website,Reducing checkout latency from 1.8s to sub-200ms
