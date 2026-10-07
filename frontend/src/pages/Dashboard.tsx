@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ComponentType } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -21,7 +21,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 type Lead = { id: string; title: string; value_cents: number; currency: string; status: string; source: string; created_at: string };
-type Project = { id: string; name: string; budget_minutes: number; status: string };
+type Project = { id: string; name: string; budget_minutes: number; budget_amount_cents: number; currency: string; status: string };
 type Entry = { id: string; project_id: string; minutes: number; approval_status: string; is_billable: boolean };
 type Approval = { id: string; entity_type: string; label: string; amount_cents?: number; currency?: string; created_at: string };
 
@@ -265,10 +265,22 @@ const BillableRing = ({ billableHours, totalHours }: { billableHours: number; to
   );
 };
 
-const ProjectRow = ({ project, used }: { project: Project; used: number }) => {
+const formatProjectBudget = (amountCents: number, currency: string) => {
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amountCents / 100);
+  } catch {
+    return `${currency} ${(amountCents / 100).toFixed(2)}`;
+  }
+};
+
+const ProjectRow = ({ project, usedMinutes }: { project: Project; usedMinutes: number }) => {
   const ready = useAfterPaint();
-  const budget = project.budget_minutes / 60;
-  const pct = budget ? Math.min(100, (used / budget) * 100) : 0;
+  const budgetMinutes = Math.max(0, project.budget_minutes);
+  const usedHours = usedMinutes / 60;
+  const budgetHours = budgetMinutes / 60;
+  const hasTimeBudget = budgetMinutes > 0;
+  const hasFinancialBudget = project.budget_amount_cents > 0;
+  const pct = hasTimeBudget ? Math.min(100, (usedMinutes / budgetMinutes) * 100) : 0;
   return (
     <div className="border-b border-semantic-border/60 py-2.5 last:border-0">
       <div className="flex items-center justify-between gap-2 text-sm">
@@ -276,19 +288,33 @@ const ProjectRow = ({ project, used }: { project: Project; used: number }) => {
           <span className="truncate font-semibold text-semantic-text">{project.name}</span>
           <Badge variant="muted">{project.status.charAt(0).toUpperCase() + project.status.slice(1)}</Badge>
         </div>
-        <span className="shrink-0 text-xs tabular-nums text-semantic-text-muted">
-          {used.toFixed(1)} / {budget.toFixed(1)}h
-        </span>
-      </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-semantic-surface-muted">
-        <div
-          className={cn(
-            'h-full rounded-full transition-[width] duration-1000 ease-out',
-            pct >= 80 ? 'bg-semantic-warning' : 'bg-semantic-accent'
+        <div className="shrink-0 text-right text-xs tabular-nums text-semantic-text-muted">
+          <div>{hasTimeBudget ? `${usedHours.toFixed(1)} / ${budgetHours.toFixed(1)}h` : `${usedHours.toFixed(1)}h logged · ${hasFinancialBudget ? 'no time budget' : 'no budget'}`}</div>
+          {hasFinancialBudget && (
+            <div className="mt-0.5 font-medium text-semantic-text">
+              {formatProjectBudget(project.budget_amount_cents, project.currency)} project budget
+            </div>
           )}
-          style={{ width: `${ready ? pct : 0}%` }}
-        />
+        </div>
       </div>
+      {hasTimeBudget && (
+        <div
+          className="mt-2 h-2 overflow-hidden rounded-full bg-semantic-surface-muted"
+          role="progressbar"
+          aria-label={`${project.name} time budget used`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(pct)}
+        >
+          <div
+            className={cn(
+              'h-full rounded-full transition-[width] duration-1000 ease-out',
+              pct >= 80 ? 'bg-semantic-warning' : 'bg-semantic-accent'
+            )}
+            style={{ width: `${ready ? pct : 0}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 };
@@ -398,7 +424,16 @@ export const Dashboard = () => {
     },
   ];
 
-  const projectHours = (project: Project) => entries.filter((entry) => entry.project_id === project.id).reduce((sum, entry) => sum + entry.minutes, 0) / 60;
+  const projectMinutesById = useMemo(() => {
+    const totals = new Map<string, number>();
+    entries.forEach((entry) => {
+      totals.set(entry.project_id, (totals.get(entry.project_id) || 0) + entry.minutes);
+    });
+    return totals;
+  }, [entries]);
+  const displayedProjects = [...activeProjects].sort(
+    (a, b) => Number(b.budget_minutes > 0) - Number(a.budget_minutes > 0)
+  );
 
   const formatDate = (dateStr: string) => {
     try {
@@ -569,7 +604,7 @@ export const Dashboard = () => {
                 <CardHeader>
                   <div>
                     <h2 className="font-bold text-semantic-text">Project time</h2>
-                    <p className="mt-1 text-xs text-semantic-text-muted">Logged hours against budget</p>
+                    <p className="mt-1 text-xs text-semantic-text-muted">Hours vs time budget; project value shown separately</p>
                   </div>
                   <Link to="/projects" className="text-xs font-semibold text-semantic-accent">
                     Manage projects &rarr;
@@ -586,8 +621,8 @@ export const Dashboard = () => {
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      {activeProjects.slice(0, 6).map((project) => (
-                        <ProjectRow key={project.id} project={project} used={projectHours(project)} />
+                      {displayedProjects.slice(0, 6).map((project) => (
+                        <ProjectRow key={project.id} project={project} usedMinutes={projectMinutesById.get(project.id) || 0} />
                       ))}
                     </div>
                   )}
