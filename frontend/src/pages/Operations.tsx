@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Sparkles, CheckCircle2, Inbox, Loader2 } from 'lucide-react';
+import { Search, Sparkles, CheckCircle2, Inbox, Loader2, ChevronDown, Target, Activity, Receipt } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Badge } from '../components/ui/Badge';
@@ -34,6 +34,104 @@ type WorkflowRun = { id: string; workflow_type: string; status: string; created_
 type KnowledgeResult = { content: string; document: { id: string; title: string }; relevance_score: number };
 
 const fieldControl = 'rounded-ui-xl px-3.5 py-2 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border w-full';
+
+/* ------------------------------------------------------------------ */
+/* Shared UI helpers (animation + scrolling)                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Smoothly scrolls an element into view. `scrollIntoView` works with whichever ancestor actually scrolls.
+ * The app layout scrolls <main>, not the window, so `window.scrollTo(...)` had no effect.
+ */
+function scrollToElement(el: HTMLElement | null) {
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Ref + helper for a page's editor form: scrolls it into view and pulses it briefly. */
+function useEditorScroll() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [flash, setFlash] = useState(false);
+  const focusEditor = useCallback(() => {
+    scrollToElement(ref.current);
+    setFlash(true);
+    window.setTimeout(() => setFlash(false), 1200);
+  }, []);
+  const className = cn('ops-rise scroll-mt-4 rounded-ui-2xl', flash && 'ops-flash');
+  return { ref, focusEditor, className };
+}
+
+/** Becomes true right after first paint so CSS width transitions can run from their empty state. */
+function useAfterPaint() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, []);
+  return ready;
+}
+
+const opsStyles = `
+@keyframes ops-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ops-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ops-flash {
+  0% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(14, 165, 233, 0); }
+}
+.ops-rise { animation: ops-rise 520ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.ops-pop { animation: ops-pop 300ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.ops-flash { animation: ops-flash 1100ms ease-out 1; }
+@media (prefers-reduced-motion: reduce) {
+  .ops-rise, .ops-pop, .ops-flash { animation: none; }
+}
+`;
+
+const OpsStyles = () => <style>{opsStyles}</style>;
+
+/** Thin gradient strip used on top of editor/form cards. */
+const FormAccent = () => (
+  <span
+    aria-hidden="true"
+    className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500 opacity-80"
+  />
+);
+
+const BudgetBar = ({ usedMinutes, budgetMinutes }: { usedMinutes: number; budgetMinutes: number }) => {
+  const ready = useAfterPaint();
+  const pct = Math.min(100, (usedMinutes / budgetMinutes) * 100);
+  const overBudget = usedMinutes > budgetMinutes;
+  return (
+    <div className="w-full max-w-md mt-2">
+      <div className="flex justify-between text-[11px] text-semantic-text-muted mb-1">
+        <span>Budget usage</span>
+        <span className={cn('tabular-nums', overBudget && 'font-semibold text-semantic-danger')}>
+          {(usedMinutes / 60).toFixed(1)} / {(budgetMinutes / 60).toFixed(1)}h · {Math.round((usedMinutes / budgetMinutes) * 100)}%
+        </span>
+      </div>
+      <div className="h-2 w-full rounded-full bg-semantic-surface-muted overflow-hidden">
+        <div
+          className={cn(
+            'h-full rounded-full transition-[width] duration-1000 ease-out',
+            overBudget ? 'bg-semantic-danger' : pct >= 80 ? 'bg-semantic-warning' : 'bg-semantic-accent/70'
+          )}
+          style={{ width: `${ready ? pct : 0}%` }}
+        />
+      </div>
+    </div>
+  );
+};
 
 function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase() || '').join('') || '?';
@@ -75,6 +173,10 @@ function expenseCategoryColor(cat: string): 'default' | 'ai' | 'success' | 'warn
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Projects                                                            */
+/* ------------------------------------------------------------------ */
+
 export function ProjectsPage() {
   const [rows, setRows] = useState<Project[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -86,6 +188,7 @@ export function ProjectsPage() {
   const [editing, setEditing] = useState<Project | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const editor = useEditorScroll();
 
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -120,7 +223,7 @@ export function ProjectsPage() {
     return map;
   }, [entries]);
 
-  const saveProject = async (e: React.FormEvent) => {
+  const saveProject = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await apiRequest(editing ? `/operations/projects/${editing.id}` : '/operations/projects', {
@@ -209,15 +312,16 @@ export function ProjectsPage() {
         if (sortKey === 'name') cmp = a.name.localeCompare(b.name);
         else if (sortKey === 'created_at') cmp = a.id.localeCompare(b.id);
         else if (sortKey === 'budget_used') {
-          const pa = a.budget_minutes ? (a.budget_minutes / 60) : 0;
-          const pb = b.budget_minutes ? (b.budget_minutes / 60) : 0;
+          // Fix: sort by how much of its budget each project has actually used (matches the label).
+          const pa = a.budget_minutes ? (usedMinutesByProject.get(a.id) || 0) / a.budget_minutes : 0;
+          const pb = b.budget_minutes ? (usedMinutesByProject.get(b.id) || 0) / b.budget_minutes : 0;
           cmp = pa - pb;
         }
         return sortDir === 'desc' ? -cmp : cmp;
       });
     }
     return list;
-  }, [rows, search, filterStatus, sortKey, sortDir]);
+  }, [rows, search, filterStatus, sortKey, sortDir, usedMinutesByProject]);
 
   const toggleSort = (key: string) => {
     if (sortKey === key) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
@@ -226,6 +330,7 @@ export function ProjectsPage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Delivery"
         title="Projects & Tasks"
@@ -234,240 +339,246 @@ export function ProjectsPage() {
       />
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">{editing ? 'Update project' : 'Create project'}</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Set the time and amount budget for delivery tracking.</p>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={(e) => void saveProject(e)} className="grid gap-4 sm:grid-cols-[2fr_1fr_1fr_auto]">
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Project name
-              <input className={`${fieldControl} mt-1.5`} required placeholder="e.g. Client portal rollout" value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Time budget (hours)
-              <input className={`${fieldControl} mt-1.5`} type="number" min="0" placeholder="0" value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Amount budget (USD)
-              <input className={`${fieldControl} mt-1.5`} type="number" min="0" step="0.01" placeholder="0.00" value={budget} onChange={(e) => setBudget(e.target.value)} />
-            </label>
-            <div className="flex items-end gap-2">
-              <Button type="submit" size="md">{editing ? 'Save changes' : 'Create project'}</Button>
-              {editing && (
-                <Button type="button" variant="secondary" onClick={() => { setEditing(null); setName(''); setBudgetHours(''); setBudget(''); }}>
-                  Cancel
-                </Button>
-              )}
+      <div ref={editor.ref} className={editor.className}>
+        <Card className="relative overflow-hidden">
+          <FormAccent />
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">{editing ? 'Update project' : 'Create project'}</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Set the time and amount budget for delivery tracking.</p>
             </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">Projects list</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Click a project name to open its tasks.</p>
-          </div>
-          <div className="flex flex-wrap gap-2 items-center">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
-              <input
-                type="text"
-                placeholder="Search projects..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="rounded-ui-xl px-3.5 py-2 pl-9 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border min-w-[200px]"
-              />
-            </div>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[130px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-            >
-              <option value="all">All statuses</option>
-              <option value="active">Active</option>
-              <option value="archived">Archived</option>
-            </select>
-            <select
-              value={sortKey ?? ''}
-              onChange={(e) => toggleSort(e.target.value || 'created_at')}
-              className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[160px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-            >
-              <option value="created_at">Created {sortDir === 'desc' ? '↓' : '↑'}</option>
-              <option value="name">Name {sortDir === 'desc' ? '↓' : '↑'}</option>
-              <option value="budget_used">Budget used {sortDir === 'desc' ? '↓' : '↑'}</option>
-            </select>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {loading ? (
-            <div className="space-y-3">
-              <Skeleton variant="card" />
-              <Skeleton variant="card" />
-            </div>
-          ) : filteredRows.length === 0 ? (
-            <EmptyState
-              icon={Inbox}
-              title="No projects yet"
-              description="Add a project above to begin tracking delivery and tasks."
-            />
-          ) : (
-            filteredRows.map((project) => (
-              <Card key={project.id} className={cn(expanded === project.id && 'ring-2 ring-semantic-accent/20')}>
-                <CardHeader>
-                  <button
-                    className="min-w-0 flex-1 text-left flex flex-col items-start gap-1"
-                    onClick={() => void toggle(project)}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-semantic-text">{project.name}</span>
-                      <Badge variant={project.status === 'archived' ? 'muted' : 'success'}>
-                        {project.status}
-                      </Badge>
-                    </div>
-                    {project.description && (
-                      <p className="text-sm text-semantic-text-muted truncate max-w-xl">{project.description}</p>
-                    )}
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-semantic-text-muted mt-0.5">
-                      {(project.start_date || project.end_date) && (
-                        <span>
-                          {project.start_date || '—'} → {project.end_date || '—'}
-                        </span>
-                      )}
-                      <span>
-                        {(project.budget_minutes / 60).toFixed(1)}h · {formatCurrency(project.budget_amount_cents, project.currency)} budget
-                      </span>
-                    </div>
-                    {project.budget_minutes > 0 && (() => {
-                      const usedMinutes = usedMinutesByProject.get(project.id) || 0;
-                      const pct = Math.min(100, (usedMinutes / project.budget_minutes) * 100);
-                      const overBudget = usedMinutes > project.budget_minutes;
-                      return (
-                        <div className="w-full max-w-md mt-2">
-                          <div className="flex justify-between text-[11px] text-semantic-text-muted mb-1">
-                            <span>Budget usage</span>
-                            <span className={cn(overBudget && 'font-semibold text-semantic-danger')}>
-                              {(usedMinutes / 60).toFixed(1)} / {(project.budget_minutes / 60).toFixed(1)}h · {Math.round((usedMinutes / project.budget_minutes) * 100)}%
-                            </span>
-                          </div>
-                          <div className="h-2 w-full rounded-full bg-semantic-surface-muted overflow-hidden">
-                            <div
-                              className={cn(
-                                'h-full rounded-full transition-all duration-300',
-                                overBudget ? 'bg-semantic-danger' : pct >= 80 ? 'bg-semantic-warning' : 'bg-semantic-accent/70'
-                              )}
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </button>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setEditing(project);
-                        setName(project.name);
-                        setBudgetHours(String(project.budget_minutes / 60));
-                        setBudget(String(project.budget_amount_cents / 100));
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                      }}
-                    >
-                      Edit
-                    </Button>
-                    {project.status !== 'archived' && (
-                      <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft" onClick={() => void archiveProject(project)}>
-                        Archive
-                      </Button>
-                    )}
-                  </div>
-                </CardHeader>
-                {expanded === project.id && (
-                  <CardContent className="border-t border-semantic-border bg-semantic-surface-muted/40">
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted mb-3">Tasks</h3>
-                    <div className="space-y-2 mb-4">
-                      {(tasks[project.id] || []).length === 0 ? (
-                        <div className="py-6">
-                          <EmptyState icon={Inbox} title="No tasks yet" description="Add a task below to start planning." />
-                        </div>
-                      ) : (
-                        (tasks[project.id] || []).map((task) => (
-                          <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-3 py-2.5 text-sm">
-                            <button
-                              className="min-w-0 flex-1 truncate text-left font-medium text-semantic-text"
-                              onClick={() => {
-                                const title = window.prompt('Update task title', task.title);
-                                if (title?.trim() && title !== task.title) void updateTask(task, { title: title.trim() });
-                              }}
-                            >
-                              {task.title}
-                            </button>
-                            <div className="flex flex-wrap items-center gap-2">
-                              {task.assignee_id ? (
-                                <Badge variant="muted" className="h-6 w-6 rounded-full p-0 justify-center">
-                                  {initials('U')}
-                                </Badge>
-                              ) : (
-                                <Badge variant="muted" size="sm">Unassigned</Badge>
-                              )}
-                              {task.estimate_minutes > 0 && (
-                                <Badge variant="muted" size="sm">{(task.estimate_minutes / 60).toFixed(1)}h est</Badge>
-                              )}
-                              <select
-                                aria-label={`Status for ${task.title}`}
-                                className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs"
-                                value={task.status}
-                                onChange={(e) => void updateTask(task, { status: e.target.value })}
-                              >
-                                <option value="todo">To do</option>
-                                <option value="in_progress">In progress</option>
-                                <option value="done">Done</option>
-                              </select>
-                              <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void removeTask(task)}>
-                                Delete
-                              </Button>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    <form
-                      className="flex flex-col gap-2 sm:flex-row"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const title = newTaskTitle[project.id] || '';
-                        if (title.trim()) {
-                          void addTask(project.id, title.trim());
-                          setNewTaskTitle((old) => ({ ...old, [project.id]: '' }));
-                        }
-                      }}
-                    >
-                      <input
-                        aria-label="New task title"
-                        className={fieldControl}
-                        placeholder="Describe a task to add to this project"
-                        value={newTaskTitle[project.id] || ''}
-                        onChange={(e) => setNewTaskTitle((old) => ({ ...old, [project.id]: e.target.value }))}
-                      />
-                      <Button type="submit">Add task</Button>
-                    </form>
-                  </CardContent>
+            {editing && <Badge variant="warning">Editing</Badge>}
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={(e) => void saveProject(e)} className="grid gap-4 sm:grid-cols-[2fr_1fr_1fr_auto]">
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Project name
+                <input className={`${fieldControl} mt-1.5`} required placeholder="e.g. Client portal rollout" value={name} onChange={(e) => setName(e.target.value)} />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Time budget (hours)
+                <input className={`${fieldControl} mt-1.5`} type="number" min="0" placeholder="0" value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Amount budget (USD)
+                <input className={`${fieldControl} mt-1.5`} type="number" min="0" step="0.01" placeholder="0.00" value={budget} onChange={(e) => setBudget(e.target.value)} />
+              </label>
+              <div className="flex items-end gap-2">
+                <Button type="submit" size="md">{editing ? 'Save changes' : 'Create project'}</Button>
+                {editing && (
+                  <Button type="button" variant="secondary" onClick={() => { setEditing(null); setName(''); setBudgetHours(''); setBudget(''); }}>
+                    Cancel
+                  </Button>
                 )}
-              </Card>
-            ))
-          )}
-        </CardContent>
-      </Card>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
+        <Card>
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">Projects list</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Click a project name to open its tasks.</p>
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
+                <input
+                  type="text"
+                  placeholder="Search projects..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="rounded-ui-xl px-3.5 py-2 pl-9 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border min-w-[200px]"
+                />
+              </div>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[130px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+              >
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="archived">Archived</option>
+              </select>
+              <select
+                value={sortKey ?? ''}
+                onChange={(e) => toggleSort(e.target.value || 'created_at')}
+                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[160px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+              >
+                <option value="created_at">Created {sortDir === 'desc' ? '↓' : '↑'}</option>
+                <option value="name">Name {sortDir === 'desc' ? '↓' : '↑'}</option>
+                <option value="budget_used">Budget used {sortDir === 'desc' ? '↓' : '↑'}</option>
+              </select>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {loading ? (
+              <div className="space-y-3">
+                <Skeleton variant="card" />
+                <Skeleton variant="card" />
+              </div>
+            ) : filteredRows.length === 0 ? (
+              <EmptyState
+                icon={Inbox}
+                title="No projects yet"
+                description="Add a project above to begin tracking delivery and tasks."
+              />
+            ) : (
+              filteredRows.map((project, index) => (
+                <Card
+                  key={project.id}
+                  className={cn(
+                    'ops-pop transition-all duration-200 hover:shadow-ui-lg',
+                    expanded === project.id && 'ring-2 ring-semantic-accent/20'
+                  )}
+                  style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+                >
+                  <CardHeader>
+                    <button
+                      className="group min-w-0 flex-1 text-left flex flex-col items-start gap-1 focus-visible:outline-none"
+                      onClick={() => void toggle(project)}
+                      aria-expanded={expanded === project.id}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ChevronDown
+                          className={cn(
+                            'h-4 w-4 text-semantic-text-muted transition-transform duration-200 group-hover:text-semantic-accent',
+                            expanded === project.id && 'rotate-180 text-semantic-accent'
+                          )}
+                        />
+                        <span className="font-bold text-semantic-text group-hover:text-semantic-accent transition-colors">{project.name}</span>
+                        <Badge variant={project.status === 'archived' ? 'muted' : 'success'}>
+                          {project.status}
+                        </Badge>
+                      </div>
+                      {project.description && (
+                        <p className="text-sm text-semantic-text-muted truncate max-w-xl">{project.description}</p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-semantic-text-muted mt-0.5">
+                        {(project.start_date || project.end_date) && (
+                          <span>
+                            {project.start_date || '—'} → {project.end_date || '—'}
+                          </span>
+                        )}
+                        <span>
+                          {(project.budget_minutes / 60).toFixed(1)}h · {formatCurrency(project.budget_amount_cents, project.currency)} budget
+                        </span>
+                      </div>
+                      {project.budget_minutes > 0 && (
+                        <BudgetBar
+                          usedMinutes={usedMinutesByProject.get(project.id) || 0}
+                          budgetMinutes={project.budget_minutes}
+                        />
+                      )}
+                    </button>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setEditing(project);
+                          setName(project.name);
+                          setBudgetHours(String(project.budget_minutes / 60));
+                          setBudget(String(project.budget_amount_cents / 100));
+                          editor.focusEditor();
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      {project.status !== 'archived' && (
+                        <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft" onClick={() => void archiveProject(project)}>
+                          Archive
+                        </Button>
+                      )}
+                    </div>
+                  </CardHeader>
+                  {expanded === project.id && (
+                    <CardContent className="ops-pop border-t border-semantic-border bg-semantic-surface-muted/40">
+                      <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted mb-3">Tasks</h3>
+                      <div className="space-y-2 mb-4">
+                        {(tasks[project.id] || []).length === 0 ? (
+                          <div className="py-6">
+                            <EmptyState icon={Inbox} title="No tasks yet" description="Add a task below to start planning." />
+                          </div>
+                        ) : (
+                          (tasks[project.id] || []).map((task) => (
+                            <div key={task.id} className="ops-pop flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-3 py-2.5 text-sm transition-colors hover:border-semantic-accent/40">
+                              <button
+                                className="min-w-0 flex-1 truncate text-left font-medium text-semantic-text"
+                                onClick={() => {
+                                  const title = window.prompt('Update task title', task.title);
+                                  if (title?.trim() && title !== task.title) void updateTask(task, { title: title.trim() });
+                                }}
+                              >
+                                {task.title}
+                              </button>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {task.assignee_id ? (
+                                  <Badge variant="muted" className="h-6 w-6 rounded-full p-0 justify-center">
+                                    {initials('U')}
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="muted" size="sm">Unassigned</Badge>
+                                )}
+                                {task.estimate_minutes > 0 && (
+                                  <Badge variant="muted" size="sm">{(task.estimate_minutes / 60).toFixed(1)}h est</Badge>
+                                )}
+                                <select
+                                  aria-label={`Status for ${task.title}`}
+                                  className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs"
+                                  value={task.status}
+                                  onChange={(e) => void updateTask(task, { status: e.target.value })}
+                                >
+                                  <option value="todo">To do</option>
+                                  <option value="in_progress">In progress</option>
+                                  <option value="done">Done</option>
+                                </select>
+                                <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void removeTask(task)}>
+                                  Delete
+                                </Button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <form
+                        className="flex flex-col gap-2 sm:flex-row"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const title = newTaskTitle[project.id] || '';
+                          if (title.trim()) {
+                            void addTask(project.id, title.trim());
+                            setNewTaskTitle((old) => ({ ...old, [project.id]: '' }));
+                          }
+                        }}
+                      >
+                        <input
+                          aria-label="New task title"
+                          className={fieldControl}
+                          placeholder="Describe a task to add to this project"
+                          value={newTaskTitle[project.id] || ''}
+                          onChange={(e) => setNewTaskTitle((old) => ({ ...old, [project.id]: e.target.value }))}
+                        />
+                        <Button type="submit">Add task</Button>
+                      </form>
+                    </CardContent>
+                  )}
+                </Card>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Timesheets                                                          */
+/* ------------------------------------------------------------------ */
 
 export function TimesheetsPage() {
   const { user } = useAuth();
@@ -483,6 +594,7 @@ export function TimesheetsPage() {
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState('');
   const [loading, setLoading] = useState(true);
+  const editor = useEditorScroll();
 
   const [search, setSearch] = useState('');
   const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({
@@ -493,6 +605,8 @@ export function TimesheetsPage() {
   const [sortKey, setSortKey] = useState<string | null>('entry_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
+  // Fix: no longer depends on `projectId`. Previously, choosing a project in the form recreated this
+  // callback and triggered a full reload (table loading flash) every time the project selection changed.
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -502,17 +616,17 @@ export function TimesheetsPage() {
         apiRequest<Employee[]>('/operations/people').catch(() => [] as Employee[]),
       ]);
       setEntries(e); setProjects(p); setPeople(pe);
-      if (!projectId && p[0]) setProjectId(p[0].id);
+      setProjectId((current) => current || p[0]?.id || '');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load timesheets');
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  const add = async (e: React.FormEvent) => {
+  const add = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await apiRequest(editingId ? `/operations/timesheets/${editingId}` : '/operations/timesheets', {
@@ -668,7 +782,7 @@ export function TimesheetsPage() {
       sortable: true,
       align: 'right',
       widthClass: 'w-[90px]',
-      render: (r) => (r.minutes / 60).toFixed(1),
+      render: (r) => <span className="tabular-nums">{(r.minutes / 60).toFixed(1)}</span>,
     },
     {
       key: 'is_billable',
@@ -707,7 +821,7 @@ export function TimesheetsPage() {
                     setHours((entry.minutes / 60).toFixed(1));
                     setDescription(entry.description);
                     setBillable(entry.is_billable);
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    editor.focusEditor();
                   }}>Edit</Button>
                   <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(entry)}>Delete</Button>
                 </>
@@ -727,6 +841,7 @@ export function TimesheetsPage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Time tracking"
         title="Timesheets"
@@ -734,71 +849,81 @@ export function TimesheetsPage() {
       />
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">{editingId ? 'Update entry' : 'Log time'}</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Assign hours to a project with a short description.</p>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={(e) => void add(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Project
-              <select className={`${fieldControl} mt-1.5`} required value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                <option value="">Choose project</option>
-                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Work date
-              <input className={`${fieldControl} mt-1.5`} type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Hours worked
-              <input className={`${fieldControl} mt-1.5`} type="number" required min="0.1" max="24" step="0.1" placeholder="e.g. 2.5" value={hours} onChange={(e) => setHours(e.target.value)} />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Work description
-              <input className={`${fieldControl} mt-1.5`} required placeholder="What work did you complete?" value={description} onChange={(e) => setDescription(e.target.value)} />
-            </label>
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="flex items-center gap-2 pb-2 text-sm text-semantic-text-muted">
-                <input type="checkbox" className="h-4 w-4 rounded border-semantic-border accent-[var(--accent)] transition" checked={billable} onChange={(e) => setBillable(e.target.checked)} />
-                Billable
-              </label>
-              <Button type="submit" disabled={!projects.length}>{editingId ? 'Save entry' : 'Log time'}</Button>
-              {editingId && (
-                <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setHours(''); setDescription(''); }}>
-                  Cancel
-                </Button>
-              )}
+      <div ref={editor.ref} className={editor.className}>
+        <Card className="relative overflow-hidden">
+          <FormAccent />
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">{editingId ? 'Update entry' : 'Log time'}</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Assign hours to a project with a short description.</p>
             </div>
-          </form>
-        </CardContent>
-      </Card>
+            {editingId && <Badge variant="warning">Editing</Badge>}
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={(e) => void add(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Project
+                <select className={`${fieldControl} mt-1.5`} required value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                  <option value="">Choose project</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Work date
+                <input className={`${fieldControl} mt-1.5`} type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Hours worked
+                <input className={`${fieldControl} mt-1.5`} type="number" required min="0.1" max="24" step="0.1" placeholder="e.g. 2.5" value={hours} onChange={(e) => setHours(e.target.value)} />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Work description
+                <input className={`${fieldControl} mt-1.5`} required placeholder="What work did you complete?" value={description} onChange={(e) => setDescription(e.target.value)} />
+              </label>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="flex items-center gap-2 pb-2 text-sm text-semantic-text-muted">
+                  <input type="checkbox" className="h-4 w-4 rounded border-semantic-border accent-[var(--accent)] transition" checked={billable} onChange={(e) => setBillable(e.target.checked)} />
+                  Billable
+                </label>
+                <Button type="submit" disabled={!projects.length}>{editingId ? 'Save entry' : 'Log time'}</Button>
+                {editingId && (
+                  <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setHours(''); setDescription(''); }}>
+                    Cancel
+                  </Button>
+                )}
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
 
-      <DataTable<Entry>
-        columns={columns}
-        rows={filteredEntries}
-        rowKey={(r) => r.id}
-        searchable
-        searchPlaceholder="Search description..."
-        searchValue={search}
-        onSearchChange={setSearch}
-        filters={filters}
-        filterValues={filterValues}
-        onFilterChange={onFilterChange}
-        sortable
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSortChange={toggleSort}
-        loading={loading}
-        emptyState={<EmptyState icon={Inbox} title="No time entries" description="Log your first entry using the form above." />}
-      />
+      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
+        <DataTable<Entry>
+          columns={columns}
+          rows={filteredEntries}
+          rowKey={(r) => r.id}
+          searchable
+          searchPlaceholder="Search description..."
+          searchValue={search}
+          onSearchChange={setSearch}
+          filters={filters}
+          filterValues={filterValues}
+          onFilterChange={onFilterChange}
+          sortable
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSortChange={toggleSort}
+          loading={loading}
+          emptyState={<EmptyState icon={Inbox} title="No time entries" description="Log your first entry using the form above." />}
+        />
+      </div>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* People                                                              */
+/* ------------------------------------------------------------------ */
 
 export function PeoplePage() {
   const { user } = useAuth();
@@ -812,6 +937,7 @@ export function PeoplePage() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
+  const editor = useEditorScroll();
 
   const [search, setSearch] = useState('');
   const [filterActive, setFilterActive] = useState<string>('all');
@@ -831,7 +957,7 @@ export function PeoplePage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const add = async (e: React.FormEvent) => {
+  const add = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await apiRequest(editing ? `/operations/people/${editing.id}` : '/operations/people', {
@@ -915,12 +1041,17 @@ export function PeoplePage() {
       header: 'Name',
       sortable: true,
       render: (r) => (
-        <div className="flex flex-col">
-          <span className="font-bold text-semantic-text flex items-center gap-2">
-            {r.full_name}
-            {!r.is_active && <Badge variant="danger" size="sm">Inactive</Badge>}
-          </span>
-          {r.title && <span className="text-xs text-semantic-text-muted mt-0.5">{r.title}</span>}
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 text-xs font-bold text-white">
+            {initials(r.full_name)}
+          </div>
+          <div className="flex flex-col">
+            <span className="font-bold text-semantic-text flex items-center gap-2">
+              {r.full_name}
+              {!r.is_active && <Badge variant="danger" size="sm">Inactive</Badge>}
+            </span>
+            {r.title && <span className="text-xs text-semantic-text-muted mt-0.5">{r.title}</span>}
+          </div>
         </div>
       ),
     },
@@ -952,6 +1083,7 @@ export function PeoplePage() {
             setTitle(r.title || '');
             setBilling((r.billing_rate_cents / 100).toFixed(2));
             setCost((r.cost_rate_cents / 100).toFixed(2));
+            editor.focusEditor();
           }}>Edit</Button>
           {r.is_active ? (
             <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void deactivate(r)}>Deactivate</Button>
@@ -965,6 +1097,7 @@ export function PeoplePage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Workspace"
         title="People & Team"
@@ -973,68 +1106,76 @@ export function PeoplePage() {
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
       {canManagePeople && (
-        <Card>
-          <CardHeader>
-            <div>
-              <h2 className="font-semibold text-semantic-text">{editing ? 'Update teammate' : 'Add teammate'}</h2>
-              <p className="text-xs text-semantic-text-muted mt-0.5">Set billing and cost rates used for profitability reporting.</p>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={(e) => void add(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Full name
-                <input className={`${fieldControl} mt-1.5`} required placeholder="Team member name" value={name} onChange={(e) => setName(e.target.value)} />
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Email
-                <input className={`${fieldControl} mt-1.5`} type="email" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Job title
-                <input className={`${fieldControl} mt-1.5`} placeholder="e.g. Designer" value={title} onChange={(e) => setTitle(e.target.value)} />
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Billing rate / hour
-                <input className={`${fieldControl} mt-1.5`} type="number" min="0" step="0.01" placeholder="0.00" value={billing} onChange={(e) => setBilling(e.target.value)} />
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Cost rate / hour
-                <input className={`${fieldControl} mt-1.5`} type="number" min="0" step="0.01" placeholder="0.00" value={cost} onChange={(e) => setCost(e.target.value)} />
-              </label>
-              <div className="flex items-end gap-2">
-                <Button type="submit">{editing ? 'Save changes' : 'Add teammate'}</Button>
-                {editing && (
-                  <Button type="button" variant="secondary" onClick={() => { setEditing(null); setName(''); setEmail(''); setTitle(''); setBilling(''); setCost(''); }}>
-                    Cancel
-                  </Button>
-                )}
+        <div ref={editor.ref} className={editor.className}>
+          <Card className="relative overflow-hidden">
+            <FormAccent />
+            <CardHeader>
+              <div>
+                <h2 className="font-semibold text-semantic-text">{editing ? 'Update teammate' : 'Add teammate'}</h2>
+                <p className="text-xs text-semantic-text-muted mt-0.5">Set billing and cost rates used for profitability reporting.</p>
               </div>
-            </form>
-          </CardContent>
-        </Card>
+              {editing && <Badge variant="warning">Editing</Badge>}
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={(e) => void add(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                <label className="text-xs font-semibold text-semantic-text-muted">
+                  Full name
+                  <input className={`${fieldControl} mt-1.5`} required placeholder="Team member name" value={name} onChange={(e) => setName(e.target.value)} />
+                </label>
+                <label className="text-xs font-semibold text-semantic-text-muted">
+                  Email
+                  <input className={`${fieldControl} mt-1.5`} type="email" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+                </label>
+                <label className="text-xs font-semibold text-semantic-text-muted">
+                  Job title
+                  <input className={`${fieldControl} mt-1.5`} placeholder="e.g. Designer" value={title} onChange={(e) => setTitle(e.target.value)} />
+                </label>
+                <label className="text-xs font-semibold text-semantic-text-muted">
+                  Billing rate / hour
+                  <input className={`${fieldControl} mt-1.5`} type="number" min="0" step="0.01" placeholder="0.00" value={billing} onChange={(e) => setBilling(e.target.value)} />
+                </label>
+                <label className="text-xs font-semibold text-semantic-text-muted">
+                  Cost rate / hour
+                  <input className={`${fieldControl} mt-1.5`} type="number" min="0" step="0.01" placeholder="0.00" value={cost} onChange={(e) => setCost(e.target.value)} />
+                </label>
+                <div className="flex items-end gap-2">
+                  <Button type="submit">{editing ? 'Save changes' : 'Add teammate'}</Button>
+                  {editing && (
+                    <Button type="button" variant="secondary" onClick={() => { setEditing(null); setName(''); setEmail(''); setTitle(''); setBilling(''); setCost(''); }}>
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
-      <DataTable<Employee>
-        columns={columns}
-        rows={filteredRows}
-        rowKey={(r) => r.id}
-        searchable
-        searchPlaceholder="Search by name or email..."
-        searchValue={search}
-        onSearchChange={setSearch}
-        filters={filters}
-        filterValues={{ is_active: filterActive }}
-        onFilterChange={onFilterChange}
-        sortable
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSortChange={toggleSort}
-        loading={loading}
-        emptyState={<EmptyState icon={Inbox} title="No team members" description="Add teammates once they join the workspace." />}
-      />
+      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
+        <DataTable<Employee>
+          columns={columns}
+          rows={filteredRows}
+          rowKey={(r) => r.id}
+          searchable
+          searchPlaceholder="Search by name or email..."
+          searchValue={search}
+          onSearchChange={setSearch}
+          filters={filters}
+          filterValues={{ is_active: filterActive }}
+          onFilterChange={onFilterChange}
+          sortable
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSortChange={toggleSort}
+          loading={loading}
+          emptyState={<EmptyState icon={Inbox} title="No team members" description="Add teammates once they join the workspace." />}
+        />
+      </div>
 
-      <LeaveWidget employees={rows.filter((row) => row.is_active)} />
+      <div className="ops-rise" style={{ animationDelay: '140ms' }}>
+        <LeaveWidget employees={rows.filter((row) => row.is_active)} />
+      </div>
     </div>
   );
 }
@@ -1049,6 +1190,7 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
   const [editing, setEditing] = useState<LeaveRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const editor = useEditorScroll();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1063,7 +1205,7 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
 
   useEffect(() => { void load(); }, [load]);
 
-  const add = async (e: React.FormEvent) => {
+  const add = async (e: FormEvent) => {
     e.preventDefault();
     try {
       const payload = editing
@@ -1100,107 +1242,115 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
   }, [items, search, employees]);
 
   return (
-    <Card>
-      <CardHeader>
-        <div>
-          <h2 className="font-semibold text-semantic-text">Leave requests</h2>
-          <p className="text-xs text-semantic-text-muted mt-0.5">Record planned time away against a team member.</p>
-        </div>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
-          <input
-            type="text"
-            placeholder="Search requests..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="rounded-ui-xl px-3.5 py-2 pl-9 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border min-w-[200px]"
-          />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {error && <Alert variant="danger">{error}</Alert>}
-        <form onSubmit={(e) => void add(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {!editing && (
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Team member
-              <select className={`${fieldControl} mt-1.5`} required value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-                <option value="">Choose a person</option>
-                {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.full_name}</option>)}
-              </select>
-            </label>
-          )}
-          <label className="text-xs font-semibold text-semantic-text-muted">
-            First day
-            <input className={`${fieldControl} mt-1.5`} type="date" required value={start} onChange={(e) => setStart(e.target.value)} />
-          </label>
-          <label className="text-xs font-semibold text-semantic-text-muted">
-            Last day
-            <input className={`${fieldControl} mt-1.5`} type="date" required value={end} onChange={(e) => setEnd(e.target.value)} />
-          </label>
-          <label className="text-xs font-semibold text-semantic-text-muted">
-            Reason (optional)
-            <input className={`${fieldControl} mt-1.5`} placeholder="Add a short note" value={reason} onChange={(e) => setReason(e.target.value)} />
-          </label>
-          <div className="flex items-end gap-2">
-            <Button type="submit" disabled={!editing && !employees.length}>{editing ? 'Save changes' : 'Submit request'}</Button>
-            {editing && (
-              <Button type="button" variant="secondary" onClick={() => { setEditing(null); setStart(''); setEnd(''); setReason(''); }}>
-                Cancel
-              </Button>
+    <div ref={editor.ref} className="scroll-mt-4">
+      <Card className="relative overflow-hidden">
+        <FormAccent />
+        <CardHeader>
+          <div>
+            <h2 className="font-semibold text-semantic-text">Leave requests</h2>
+            <p className="text-xs text-semantic-text-muted mt-0.5">Record planned time away against a team member.</p>
+          </div>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
+            <input
+              type="text"
+              placeholder="Search requests..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="rounded-ui-xl px-3.5 py-2 pl-9 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border min-w-[200px]"
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error && <Alert variant="danger">{error}</Alert>}
+          <form onSubmit={(e) => void add(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {!editing && (
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Team member
+                <select className={`${fieldControl} mt-1.5`} required value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+                  <option value="">Choose a person</option>
+                  {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.full_name}</option>)}
+                </select>
+              </label>
             )}
-          </div>
-        </form>
+            <label className="text-xs font-semibold text-semantic-text-muted">
+              First day
+              <input className={`${fieldControl} mt-1.5`} type="date" required value={start} onChange={(e) => setStart(e.target.value)} />
+            </label>
+            <label className="text-xs font-semibold text-semantic-text-muted">
+              Last day
+              <input className={`${fieldControl} mt-1.5`} type="date" required value={end} onChange={(e) => setEnd(e.target.value)} />
+            </label>
+            <label className="text-xs font-semibold text-semantic-text-muted">
+              Reason (optional)
+              <input className={`${fieldControl} mt-1.5`} placeholder="Add a short note" value={reason} onChange={(e) => setReason(e.target.value)} />
+            </label>
+            <div className="flex items-end gap-2">
+              <Button type="submit" disabled={!editing && !employees.length}>{editing ? 'Save changes' : 'Submit request'}</Button>
+              {editing && (
+                <Button type="button" variant="secondary" onClick={() => { setEditing(null); setStart(''); setEnd(''); setReason(''); }}>
+                  Cancel
+                </Button>
+              )}
+            </div>
+          </form>
 
-        {loading ? (
-          <div className="space-y-2">
-            <Skeleton variant="text" />
-            <Skeleton variant="text" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={Inbox} title="No leave requests" description="No planned time away has been recorded yet." />
-        ) : (
-          <ul className="divide-y divide-semantic-border rounded-ui-xl border border-semantic-border bg-semantic-surface">
-            {filtered.map((item) => (
-              <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <span className="font-medium text-semantic-text flex items-center gap-2 flex-wrap">
-                    <Badge variant="muted" size="sm" className="h-6 w-6 rounded-full p-0 justify-center">
-                      {initials(employees.find((e) => e.id === item.employee_id)?.full_name || '?')}
+          {loading ? (
+            <div className="space-y-2">
+              <Skeleton variant="text" />
+              <Skeleton variant="text" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <EmptyState icon={Inbox} title="No leave requests" description="No planned time away has been recorded yet." />
+          ) : (
+            <ul className="divide-y divide-semantic-border rounded-ui-xl border border-semantic-border bg-semantic-surface">
+              {filtered.map((item) => (
+                <li key={item.id} className="ops-pop flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm transition-colors hover:bg-semantic-surface-muted/50">
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="font-medium text-semantic-text flex items-center gap-2 flex-wrap">
+                      <Badge variant="muted" size="sm" className="h-6 w-6 rounded-full p-0 justify-center">
+                        {initials(employees.find((e) => e.id === item.employee_id)?.full_name || '?')}
+                      </Badge>
+                      {employees.find((employee) => employee.id === item.employee_id)?.full_name || 'Team member'}
+                      <span className="text-semantic-text-muted font-normal">· {item.start_date} to {item.end_date}</span>
+                    </span>
+                    {item.reason && <span className="text-xs text-semantic-text-muted ml-8">{item.reason}</span>}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Badge variant={
+                      item.status === 'approved' ? 'success' :
+                      item.status === 'rejected' ? 'danger' :
+                      item.status === 'pending' ? 'warning' : 'muted'
+                    }>
+                      {item.status}
                     </Badge>
-                    {employees.find((employee) => employee.id === item.employee_id)?.full_name || 'Team member'}
-                    <span className="text-semantic-text-muted font-normal">· {item.start_date} to {item.end_date}</span>
-                  </span>
-                  {item.reason && <span className="text-xs text-semantic-text-muted ml-8">{item.reason}</span>}
-                </div>
-                <div className="flex items-center gap-3">
-                  <Badge variant={
-                    item.status === 'approved' ? 'success' :
-                    item.status === 'rejected' ? 'danger' :
-                    item.status === 'pending' ? 'warning' : 'muted'
-                  }>
-                    {item.status}
-                  </Badge>
-                  {item.status === 'pending' && (
-                    <>
-                      <Button variant="secondary" size="sm" onClick={() => {
-                        setEditing(item);
-                        setEmployeeId(item.employee_id);
-                        setStart(item.start_date);
-                        setEnd(item.end_date);
-                        setReason(item.reason || '');
-                      }}>Edit</Button>
-                      <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(item)}>Delete</Button>
-                    </>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+                    {item.status === 'pending' && (
+                      <>
+                        <Button variant="secondary" size="sm" onClick={() => {
+                          setEditing(item);
+                          setEmployeeId(item.employee_id);
+                          setStart(item.start_date);
+                          setEnd(item.end_date);
+                          setReason(item.reason || '');
+                          editor.focusEditor();
+                        }}>Edit</Button>
+                        <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(item)}>Delete</Button>
+                      </>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Invoicing                                                           */
+/* ------------------------------------------------------------------ */
 
 export function InvoicingPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -1214,6 +1364,7 @@ export function InvoicingPage() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
+  const editor = useEditorScroll();
 
   const [search, setSearch] = useState('');
   const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({
@@ -1248,7 +1399,7 @@ export function InvoicingPage() {
     return balance > 0 && inv.due_date < today && (inv.status === 'draft' || inv.status === 'sent');
   };
 
-  const create = async (e: React.FormEvent) => {
+  const create = async (e: FormEvent) => {
     e.preventDefault();
     try {
       const payload: Record<string, unknown> = {
@@ -1319,7 +1470,7 @@ export function InvoicingPage() {
       quantity: String(line.quantity),
       price: (line.unit_price_cents / 100).toFixed(2),
     })));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    editor.focusEditor();
   };
 
   const remove = async (invoice: Invoice) => {
@@ -1471,6 +1622,7 @@ export function InvoicingPage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Finance"
         title="Invoices & Payments"
@@ -1478,102 +1630,112 @@ export function InvoicingPage() {
       />
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">{editing ? 'Update invoice' : 'Create draft invoice'}</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Add line items and set a due date. Drafts can be edited or deleted.</p>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={(e) => void create(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Client name
-              <input className={`${fieldControl} mt-1.5`} required placeholder="Customer or company" value={client} onChange={(e) => setClient(e.target.value)} />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Project (optional)
-              <select className={`${fieldControl} mt-1.5`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                <option value="">No project</option>
-                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Issue date
-              <input className={`${fieldControl} mt-1.5`} type="date" required value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
-            </label>
-            <div className="grid grid-cols-2 gap-3">
+      <div ref={editor.ref} className={editor.className}>
+        <Card className="relative overflow-hidden">
+          <FormAccent />
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">{editing ? 'Update invoice' : 'Create draft invoice'}</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Add line items and set a due date. Drafts can be edited or deleted.</p>
+            </div>
+            {editing && <Badge variant="warning">Editing</Badge>}
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={(e) => void create(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <label className="text-xs font-semibold text-semantic-text-muted">
-                Due date
-                <input className={`${fieldControl} mt-1.5`} type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                Client name
+                <input className={`${fieldControl} mt-1.5`} required placeholder="Customer or company" value={client} onChange={(e) => setClient(e.target.value)} />
               </label>
               <label className="text-xs font-semibold text-semantic-text-muted">
-                Tax rate (%)
-                <input className={`${fieldControl} mt-1.5`} type="number" min="0" max="100" step="0.01" placeholder="0" value={tax} onChange={(e) => setTax(e.target.value)} />
+                Project (optional)
+                <select className={`${fieldControl} mt-1.5`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                  <option value="">No project</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
               </label>
-            </div>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Issue date
+                <input className={`${fieldControl} mt-1.5`} type="date" required value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-xs font-semibold text-semantic-text-muted">
+                  Due date
+                  <input className={`${fieldControl} mt-1.5`} type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </label>
+                <label className="text-xs font-semibold text-semantic-text-muted">
+                  Tax rate (%)
+                  <input className={`${fieldControl} mt-1.5`} type="number" min="0" max="100" step="0.01" placeholder="0" value={tax} onChange={(e) => setTax(e.target.value)} />
+                </label>
+              </div>
 
-            <div className="space-y-3 sm:col-span-2 lg:col-span-4">
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted">Invoice line items</h3>
-              {lineItems.map((line, index) => (
-                <div key={index} className="grid items-end gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/50 p-3 sm:grid-cols-[2fr_120px_1fr_auto]">
-                  <label className="text-xs font-semibold text-semantic-text-muted">
-                    Description
-                    <input className={`${fieldControl} mt-1.5`} required placeholder="Service or product" value={line.description} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, description: e.target.value } : item))} />
-                  </label>
-                  <label className="text-xs font-semibold text-semantic-text-muted">
-                    Quantity
-                    <input className={`${fieldControl} mt-1.5`} required type="number" min="1" value={line.quantity} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
-                  </label>
-                  <label className="text-xs font-semibold text-semantic-text-muted">
-                    Unit price (USD)
-                    <input className={`${fieldControl} mt-1.5`} required type="number" min="0" step="0.01" placeholder="0.00" value={line.price} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, price: e.target.value } : item))} />
-                  </label>
-                  {lineItems.length > 1 && (
-                    <Button type="button" variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => setLineItems((old) => old.filter((_, i) => i !== index))}>
-                      Remove
-                    </Button>
-                  )}
-                </div>
-              ))}
-              <Button type="button" variant="ghost" size="sm" onClick={() => setLineItems((old) => [...old, { description: '', quantity: '1', price: '' }])}>
-                + Add line item
-              </Button>
-            </div>
+              <div className="space-y-3 sm:col-span-2 lg:col-span-4">
+                <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted">Invoice line items</h3>
+                {lineItems.map((line, index) => (
+                  <div key={index} className="ops-pop grid items-end gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/50 p-3 transition-all duration-200 hover:border-semantic-accent/40 focus-within:border-semantic-accent/50 focus-within:shadow-ui-sm sm:grid-cols-[2fr_120px_1fr_auto]">
+                    <label className="text-xs font-semibold text-semantic-text-muted">
+                      Description
+                      <input className={`${fieldControl} mt-1.5`} required placeholder="Service or product" value={line.description} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, description: e.target.value } : item))} />
+                    </label>
+                    <label className="text-xs font-semibold text-semantic-text-muted">
+                      Quantity
+                      <input className={`${fieldControl} mt-1.5`} required type="number" min="1" value={line.quantity} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
+                    </label>
+                    <label className="text-xs font-semibold text-semantic-text-muted">
+                      Unit price (USD)
+                      <input className={`${fieldControl} mt-1.5`} required type="number" min="0" step="0.01" placeholder="0.00" value={line.price} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, price: e.target.value } : item))} />
+                    </label>
+                    {lineItems.length > 1 && (
+                      <Button type="button" variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => setLineItems((old) => old.filter((_, i) => i !== index))}>
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                <Button type="button" variant="ghost" size="sm" onClick={() => setLineItems((old) => [...old, { description: '', quantity: '1', price: '' }])}>
+                  + Add line item
+                </Button>
+              </div>
 
-            <div className="flex flex-wrap justify-end gap-2 border-t border-semantic-border pt-4 sm:col-span-2 lg:col-span-4">
-              {editing && (
-                <Button type="button" variant="secondary" onClick={() => {
-                  setEditing(null); setClient(''); setProjectId(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTax('0');
-                }}>Cancel</Button>
-              )}
-              <Button type="submit">{editing ? 'Save invoice changes' : 'Create draft invoice'}</Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+              <div className="flex flex-wrap justify-end gap-2 border-t border-semantic-border pt-4 sm:col-span-2 lg:col-span-4">
+                {editing && (
+                  <Button type="button" variant="secondary" onClick={() => {
+                    setEditing(null); setClient(''); setProjectId(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTax('0');
+                  }}>Cancel</Button>
+                )}
+                <Button type="submit">{editing ? 'Save invoice changes' : 'Create draft invoice'}</Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
 
-      <DataTable<Invoice>
-        columns={columns}
-        rows={filteredInvoices}
-        rowKey={(r) => r.id}
-        searchable
-        searchPlaceholder="Search invoice # or client..."
-        searchValue={search}
-        onSearchChange={setSearch}
-        filters={filters}
-        filterValues={filterValues}
-        onFilterChange={onFilterChange}
-        sortable
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSortChange={toggleSort}
-        loading={loading}
-        emptyState={<EmptyState icon={Inbox} title="No invoices yet" description="Create your first draft invoice above." />}
-      />
+      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
+        <DataTable<Invoice>
+          columns={columns}
+          rows={filteredInvoices}
+          rowKey={(r) => r.id}
+          searchable
+          searchPlaceholder="Search invoice # or client..."
+          searchValue={search}
+          onSearchChange={setSearch}
+          filters={filters}
+          filterValues={filterValues}
+          onFilterChange={onFilterChange}
+          sortable
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSortChange={toggleSort}
+          loading={loading}
+          emptyState={<EmptyState icon={Inbox} title="No invoices yet" description="Create your first draft invoice above." />}
+        />
+      </div>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Expenses                                                            */
+/* ------------------------------------------------------------------ */
 
 export function ExpensesPage() {
   const { user } = useAuth();
@@ -1587,6 +1749,7 @@ export function ExpensesPage() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Expense | null>(null);
   const [loading, setLoading] = useState(true);
+  const editor = useEditorScroll();
 
   const [search, setSearch] = useState('');
   const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({
@@ -1610,7 +1773,7 @@ export function ExpensesPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const create = async (e: React.FormEvent) => {
+  const create = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await apiRequest(editing ? `/billing/expenses/${editing.id}` : '/billing/expenses', {
@@ -1730,7 +1893,7 @@ export function ExpensesPage() {
       header: 'Amount',
       align: 'right',
       sortable: true,
-      render: (r) => <span className="font-bold text-semantic-text">{formatCurrency(r.amount_cents, r.currency)}</span>,
+      render: (r) => <span className="font-bold tabular-nums text-semantic-text">{formatCurrency(r.amount_cents, r.currency)}</span>,
     },
     {
       key: 'status',
@@ -1760,7 +1923,7 @@ export function ExpensesPage() {
                 setCategory(exp.category || 'general');
                 setAmount((exp.amount_cents / 100).toFixed(2));
                 setDate(exp.expense_date);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                editor.focusEditor();
               }}>Edit</Button>
               <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(exp)}>Delete</Button>
             </>
@@ -1778,6 +1941,7 @@ export function ExpensesPage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Finance"
         title="Expenses & Vendor Bills"
@@ -1785,72 +1949,82 @@ export function ExpensesPage() {
       />
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">{editing ? 'Update expense' : 'Submit expense'}</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Pending entries can be edited or removed; approved records remain in the ledger.</p>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={(e) => void create(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Vendor
-              <input className={`${fieldControl} mt-1.5`} required placeholder="Business or supplier" value={vendor} onChange={(e) => setVendor(e.target.value)} />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Expense description
-              <input className={`${fieldControl} mt-1.5`} required placeholder="What was purchased?" value={description} onChange={(e) => setDescription(e.target.value)} />
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Category
-              <select className={`${fieldControl} mt-1.5`} value={category} onChange={(e) => setCategory(e.target.value)}>
-                {CATEGORY_OPTIONS_EXPENSE.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Amount (USD)
-              <input className={`${fieldControl} mt-1.5`} required type="number" min="0.01" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} />
-            </label>
-            <div className="flex flex-col sm:flex-row gap-3 items-end">
-              <label className="text-xs font-semibold text-semantic-text-muted w-full sm:flex-1">
-                Expense date
-                <input className={`${fieldControl} mt-1.5`} required type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-              </label>
-              <div className="flex gap-2 pb-0.5">
-                <Button type="submit">{editing ? 'Save changes' : 'Submit expense'}</Button>
-                {editing && (
-                  <Button type="button" variant="secondary" onClick={() => { setEditing(null); setVendor(''); setDescription(''); setCategory('general'); setAmount(''); }}>
-                    Cancel
-                  </Button>
-                )}
-              </div>
+      <div ref={editor.ref} className={editor.className}>
+        <Card className="relative overflow-hidden">
+          <FormAccent />
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">{editing ? 'Update expense' : 'Submit expense'}</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Pending entries can be edited or removed; approved records remain in the ledger.</p>
             </div>
-          </form>
-        </CardContent>
-      </Card>
+            {editing && <Badge variant="warning">Editing</Badge>}
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={(e) => void create(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Vendor
+                <input className={`${fieldControl} mt-1.5`} required placeholder="Business or supplier" value={vendor} onChange={(e) => setVendor(e.target.value)} />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Expense description
+                <input className={`${fieldControl} mt-1.5`} required placeholder="What was purchased?" value={description} onChange={(e) => setDescription(e.target.value)} />
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Category
+                <select className={`${fieldControl} mt-1.5`} value={category} onChange={(e) => setCategory(e.target.value)}>
+                  {CATEGORY_OPTIONS_EXPENSE.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Amount (USD)
+                <input className={`${fieldControl} mt-1.5`} required type="number" min="0.01" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              </label>
+              <div className="flex flex-col sm:flex-row gap-3 items-end">
+                <label className="text-xs font-semibold text-semantic-text-muted w-full sm:flex-1">
+                  Expense date
+                  <input className={`${fieldControl} mt-1.5`} required type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                </label>
+                <div className="flex gap-2 pb-0.5">
+                  <Button type="submit">{editing ? 'Save changes' : 'Submit expense'}</Button>
+                  {editing && (
+                    <Button type="button" variant="secondary" onClick={() => { setEditing(null); setVendor(''); setDescription(''); setCategory('general'); setAmount(''); }}>
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
 
-      <DataTable<Expense>
-        columns={columns}
-        rows={filtered}
-        rowKey={(r) => r.id}
-        searchable
-        searchPlaceholder="Search vendor or description..."
-        searchValue={search}
-        onSearchChange={setSearch}
-        filters={filters}
-        filterValues={filterValues}
-        onFilterChange={onFilterChange}
-        sortable
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSortChange={toggleSort}
-        loading={loading}
-        emptyState={<EmptyState icon={Inbox} title="No expenses submitted" description="Use the form above to submit an expense." />}
-      />
+      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
+        <DataTable<Expense>
+          columns={columns}
+          rows={filtered}
+          rowKey={(r) => r.id}
+          searchable
+          searchPlaceholder="Search vendor or description..."
+          searchValue={search}
+          onSearchChange={setSearch}
+          filters={filters}
+          filterValues={filterValues}
+          onFilterChange={onFilterChange}
+          sortable
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSortChange={toggleSort}
+          loading={loading}
+          emptyState={<EmptyState icon={Inbox} title="No expenses submitted" description="Use the form above to submit an expense." />}
+        />
+      </div>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Documents                                                           */
+/* ------------------------------------------------------------------ */
 
 export function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -1867,6 +2041,7 @@ export function DocumentsPage() {
   const [filterCategory, setFilterCategory] = useState('all');
   const [sortKey, setSortKey] = useState<string | null>('updated_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const editor = useEditorScroll();
 
   const load = useCallback(async (q = query) => {
     setLoading(true);
@@ -1882,7 +2057,7 @@ export function DocumentsPage() {
 
   useEffect(() => { void load(''); }, []);
 
-  const save = async (e: React.FormEvent) => {
+  const save = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await apiRequest(editingId ? `/documents/${editingId}` : '/documents', {
@@ -1901,7 +2076,7 @@ export function DocumentsPage() {
     setTitle(doc.title);
     setCategory(doc.category);
     setContent(doc.content);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    editor.focusEditor();
   };
 
   const remove = async (id: string) => {
@@ -1914,7 +2089,7 @@ export function DocumentsPage() {
     }
   };
 
-  const semanticSearch = async (e: React.FormEvent) => {
+  const semanticSearch = async (e: FormEvent) => {
     e.preventDefault();
     if (!semanticQuery.trim()) return;
     setSearching(true); setError('');
@@ -1954,6 +2129,7 @@ export function DocumentsPage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Knowledge base"
         title="Documents & SOWs"
@@ -1962,163 +2138,183 @@ export function DocumentsPage() {
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
       <div className="grid gap-4 lg:grid-cols-2">
+        <div ref={editor.ref} className={cn(editor.className, 'h-full')}>
+          <Card className="relative h-full overflow-hidden">
+            <FormAccent />
+            <CardHeader>
+              <div>
+                <h2 className="font-semibold text-semantic-text">{editingId ? 'Update document' : 'Add a document'}</h2>
+                <p className="text-xs text-semantic-text-muted mt-0.5">Paste text content below; saved content becomes searchable by your workspace.</p>
+              </div>
+              {editingId && <Badge variant="warning">Editing</Badge>}
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={(e) => void save(e)} className="grid gap-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Document title
+                    <input className={`${fieldControl} mt-1.5`} required placeholder="e.g. Standard services agreement" value={title} onChange={(e) => setTitle(e.target.value)} />
+                  </label>
+                  <label className="text-xs font-semibold text-semantic-text-muted">
+                    Document category
+                    <select className={`${fieldControl} mt-1.5`} value={category} onChange={(e) => setCategory(e.target.value)}>
+                      {CATEGORY_OPTIONS_DOC.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <label className="text-xs font-semibold text-semantic-text-muted">
+                  Document text
+                  <textarea className={`${fieldControl} mt-1.5 min-h-[180px]`} required rows={6} placeholder="Paste the document text you want your team to search" value={content} onChange={(e) => setContent(e.target.value)} />
+                </label>
+                <div className="flex justify-end gap-2">
+                  {editingId && (
+                    <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setTitle(''); setCategory('general'); setContent(''); }}>
+                      Cancel
+                    </Button>
+                  )}
+                  <Button type="submit">{editingId ? 'Save changes' : 'Save document'}</Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="ops-rise h-full" style={{ animationDelay: '80ms' }}>
+          <Card className="h-full">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-semantic-accent" />
+                <div>
+                  <h2 className="font-semibold text-semantic-text">Ask your documents</h2>
+                  <p className="text-xs text-semantic-text-muted mt-0.5">Search by meaning to find relevant passages.</p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form onSubmit={(e) => void semanticSearch(e)} className="flex flex-col gap-2 sm:flex-row">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
+                  <input
+                    className={`${fieldControl} pl-9`}
+                    placeholder="e.g. What are our standard payment terms?"
+                    value={semanticQuery}
+                    onChange={(e) => setSemanticQuery(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" loading={searching} disabled={!semanticQuery.trim()}>
+                  {searching ? 'Searching…' : 'Search knowledge'}
+                </Button>
+              </form>
+              {knowledge.length > 0 && (
+                <div className="space-y-3">
+                  {knowledge.map((item, index) => (
+                    <article
+                      key={`${item.document.id}-${index}`}
+                      className="ops-pop rounded-ui-xl border border-semantic-accent/20 bg-semantic-accent-soft/40 p-4 transition-shadow hover:shadow-ui-sm"
+                      style={{ animationDelay: `${index * 60}ms` }}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-sm font-semibold text-semantic-text">{item.document.title}</h3>
+                        <Badge variant="ai">{Math.round(item.relevance_score * 100)}% match</Badge>
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-semantic-text-muted">{item.content}</p>
+                    </article>
+                  ))}
+                </div>
+              )}
+              {!searching && semanticQuery && knowledge.length === 0 && (
+                <Alert variant="info" title="No close matches found">Try another phrase.</Alert>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <div className="ops-rise" style={{ animationDelay: '140ms' }}>
         <Card>
           <CardHeader>
             <div>
-              <h2 className="font-semibold text-semantic-text">{editingId ? 'Update document' : 'Add a document'}</h2>
-              <p className="text-xs text-semantic-text-muted mt-0.5">Paste text content below; saved content becomes searchable by your workspace.</p>
+              <h2 className="font-semibold text-semantic-text">Saved documents</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Browse and maintain the workspace knowledge base.</p>
             </div>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={(e) => void save(e)} className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="text-xs font-semibold text-semantic-text-muted">
-                  Document title
-                  <input className={`${fieldControl} mt-1.5`} required placeholder="e.g. Standard services agreement" value={title} onChange={(e) => setTitle(e.target.value)} />
-                </label>
-                <label className="text-xs font-semibold text-semantic-text-muted">
-                  Document category
-                  <select className={`${fieldControl} mt-1.5`} value={category} onChange={(e) => setCategory(e.target.value)}>
-                    {CATEGORY_OPTIONS_DOC.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </label>
-              </div>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Document text
-                <textarea className={`${fieldControl} mt-1.5 min-h-[180px]`} required rows={6} placeholder="Paste the document text you want your team to search" value={content} onChange={(e) => setContent(e.target.value)} />
-              </label>
-              <div className="flex justify-end gap-2">
-                {editingId && (
-                  <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setTitle(''); setCategory('general'); setContent(''); }}>
-                    Cancel
-                  </Button>
-                )}
-                <Button type="submit">{editingId ? 'Save changes' : 'Save document'}</Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-semantic-accent" />
-              <div>
-                <h2 className="font-semibold text-semantic-text">Ask your documents</h2>
-                <p className="text-xs text-semantic-text-muted mt-0.5">Search by meaning to find relevant passages.</p>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <form onSubmit={(e) => void semanticSearch(e)} className="flex flex-col gap-2 sm:flex-row">
-              <div className="relative flex-1">
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
                 <input
-                  className={`${fieldControl} pl-9`}
-                  placeholder="e.g. What are our standard payment terms?"
-                  value={semanticQuery}
-                  onChange={(e) => setSemanticQuery(e.target.value)}
+                  type="text"
+                  placeholder="Search by title..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void load(); } }}
+                  className="rounded-ui-xl px-3.5 py-2 pl-9 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border min-w-[200px]"
                 />
               </div>
-              <Button type="submit" loading={searching} disabled={!semanticQuery.trim()}>
-                {searching ? 'Searching…' : 'Search knowledge'}
-              </Button>
-            </form>
-            {knowledge.length > 0 && (
+              <Button variant="secondary" size="sm" onClick={() => void load()}>Search</Button>
+              <select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[150px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+              >
+                <option value="all">All categories</option>
+                {CATEGORY_OPTIONS_DOC.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <select
+                value={sortKey ?? ''}
+                onChange={(e) => {
+                  const k = e.target.value || 'updated_at';
+                  if (sortKey === k) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+                  else { setSortKey(k); setSortDir('desc'); }
+                }}
+                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[140px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+              >
+                <option value="updated_at">Updated {sortDir === 'desc' ? '↓' : '↑'}</option>
+              </select>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {loading ? (
               <div className="space-y-3">
-                {knowledge.map((item, index) => (
-                  <article key={`${item.document.id}-${index}`} className="rounded-ui-xl border border-semantic-accent/20 bg-semantic-accent-soft/40 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-semantic-text">{item.document.title}</h3>
-                      <Badge variant="ai">{Math.round(item.relevance_score * 100)}% match</Badge>
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-semantic-text-muted">{item.content}</p>
-                  </article>
-                ))}
+                <Skeleton variant="card" />
+                <Skeleton variant="card" />
               </div>
-            )}
-            {!searching && semanticQuery && knowledge.length === 0 && (
-              <Alert variant="info" title="No close matches found">Try another phrase.</Alert>
+            ) : filteredDocs.length === 0 ? (
+              <EmptyState icon={Inbox} title="No documents yet" description="Add one above to build your searchable knowledge base." />
+            ) : (
+              filteredDocs.map((doc, index) => (
+                <Card
+                  key={doc.id}
+                  className="ops-pop transition-all duration-200 hover:-translate-y-0.5 hover:shadow-ui-lg"
+                  style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+                >
+                  <CardHeader>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-bold text-semantic-text">{doc.title}</h3>
+                        <Badge variant={categoryBadgeVariant(doc.category)} size="sm">{categoryLabel(doc.category)}</Badge>
+                      </div>
+                      <p className="text-xs text-semantic-text-muted mt-0.5">Updated {doc.updated_at}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="secondary" size="sm" onClick={() => edit(doc)}>Edit</Button>
+                      <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(doc.id)}>Delete</Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <p className="whitespace-pre-wrap text-sm leading-6 text-semantic-text-muted line-clamp-2">{doc.content}</p>
+                  </CardContent>
+                </Card>
+              ))
             )}
           </CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">Saved documents</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Browse and maintain the workspace knowledge base.</p>
-          </div>
-          <div className="flex flex-wrap gap-2 items-center">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
-              <input
-                type="text"
-                placeholder="Search by title..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void load(); } }}
-                className="rounded-ui-xl px-3.5 py-2 pl-9 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border min-w-[200px]"
-              />
-            </div>
-            <Button variant="secondary" size="sm" onClick={() => void load()}>Search</Button>
-            <select
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[150px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-            >
-              <option value="all">All categories</option>
-              {CATEGORY_OPTIONS_DOC.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <select
-              value={sortKey ?? ''}
-              onChange={(e) => {
-                const k = e.target.value || 'updated_at';
-                if (sortKey === k) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-                else { setSortKey(k); setSortDir('desc'); }
-              }}
-              className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[140px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-            >
-              <option value="updated_at">Updated {sortDir === 'desc' ? '↓' : '↑'}</option>
-            </select>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {loading ? (
-            <div className="space-y-3">
-              <Skeleton variant="card" />
-              <Skeleton variant="card" />
-            </div>
-          ) : filteredDocs.length === 0 ? (
-            <EmptyState icon={Inbox} title="No documents yet" description="Add one above to build your searchable knowledge base." />
-          ) : (
-            filteredDocs.map((doc) => (
-              <Card key={doc.id}>
-                <CardHeader>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-bold text-semantic-text">{doc.title}</h3>
-                      <Badge variant={categoryBadgeVariant(doc.category)} size="sm">{categoryLabel(doc.category)}</Badge>
-                    </div>
-                    <p className="text-xs text-semantic-text-muted mt-0.5">Updated {doc.updated_at}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="secondary" size="sm" onClick={() => edit(doc)}>Edit</Button>
-                    <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(doc.id)}>Delete</Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-semantic-text-muted line-clamp-2">{doc.content}</p>
-                </CardContent>
-              </Card>
-            ))
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Migration                                                           */
+/* ------------------------------------------------------------------ */
 
 export function MigrationPage() {
   const [jobs, setJobs] = useState<MigrationJob[]>([]);
@@ -2130,6 +2326,7 @@ export function MigrationPage() {
   const [loading, setLoading] = useState(true);
   const [filterTarget, setFilterTarget] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+  const previewRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2144,7 +2341,14 @@ export function MigrationPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const runDry = async (e: React.FormEvent) => {
+  // When a preview appears, bring it into view (it renders below the upload form).
+  useEffect(() => {
+    if (!preview) return;
+    const id = requestAnimationFrame(() => scrollToElement(previewRef.current));
+    return () => cancelAnimationFrame(id);
+  }, [preview?.id]);
+
+  const runDry = async (e: FormEvent) => {
     e.preventDefault();
     if (!file) return;
     setBusy(true); setError('');
@@ -2185,6 +2389,7 @@ export function MigrationPage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Data tools"
         title="Odoo Migration Center"
@@ -2192,141 +2397,162 @@ export function MigrationPage() {
       />
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">CSV preview & import</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Select a record type, upload the CSV, then preview before creating records.</p>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={(e) => void runDry(e)} className="grid gap-4 sm:grid-cols-[1fr_2fr_auto]">
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              Records to import
-              <select className={`${fieldControl} mt-1.5`} value={target} onChange={(e) => setTarget(e.target.value)}>
+      <div className="ops-rise">
+        <Card className="relative overflow-hidden">
+          <FormAccent />
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">CSV preview & import</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Select a record type, upload the CSV, then preview before creating records.</p>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={(e) => void runDry(e)} className="grid gap-4 sm:grid-cols-[1fr_2fr_auto]">
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                Records to import
+                <select className={`${fieldControl} mt-1.5`} value={target} onChange={(e) => setTarget(e.target.value)}>
+                  <option value="leads">Leads</option>
+                  <option value="companies">Companies</option>
+                  <option value="contacts">Contacts</option>
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-semantic-text-muted">
+                CSV file
+                <input className={`${fieldControl} mt-1.5 file:mr-3 file:py-1.5 file:px-3 file:rounded-ui-lg file:border-0 file:text-xs file:font-semibold file:bg-semantic-accent file:text-white hover:file:bg-semantic-accent-hover`} required type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+              </label>
+              <Button type="submit" className="self-end" loading={busy} disabled={!file}>
+                {busy ? 'Checking…' : 'Preview CSV'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+
+      {preview && (
+        <div ref={previewRef} className="ops-rise scroll-mt-4">
+          <Card className="shadow-ui-lg ring-1 ring-semantic-accent/20">
+            <CardHeader>
+              <div>
+                <h2 className="font-semibold text-semantic-text">Preview: {preview.filename}</h2>
+                <div className="flex flex-wrap items-center gap-2 mt-1">
+                  <Badge variant="muted" size="sm">{preview.target}</Badge>
+                  <Badge variant="success" size="sm">{preview.imported ?? 0}/{preview.row_count ?? 0} rows</Badge>
+                  {(preview.errors?.length ?? 0) > 0 && (
+                    <Badge variant="danger" size="sm">{preview.errors?.length ?? 0} errors</Badge>
+                  )}
+                  <span className="text-xs text-semantic-text-muted capitalize">Status: {preview.status}</span>
+                </div>
+              </div>
+              {preview.status === 'dry_run' && (
+                <Button
+                  loading={busy}
+                  disabled={busy || Boolean(preview.errors?.length)}
+                  onClick={() => void apply()}
+                >
+                  Apply import
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {preview.errors?.map((item) => (
+                <Alert key={item} variant="danger">{item}</Alert>
+              ))}
+              {preview.status === 'completed' && (
+                <Alert variant="success">Imported {preview.imported} records.</Alert>
+              )}
+              <div>
+                <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted mb-2">Sample rows</h3>
+                <pre className="max-h-72 overflow-auto rounded-ui-xl bg-slate-950 p-4 text-xs text-slate-100">
+                  {JSON.stringify(preview.sample || [], null, 2)}
+                </pre>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
+        <Card>
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">Import history</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Track every migration run and its validation result.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <select
+                value={filterTarget}
+                onChange={(e) => setFilterTarget(e.target.value)}
+                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[130px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+              >
+                <option value="all">All targets</option>
                 <option value="leads">Leads</option>
                 <option value="companies">Companies</option>
                 <option value="contacts">Contacts</option>
               </select>
-            </label>
-            <label className="text-xs font-semibold text-semantic-text-muted">
-              CSV file
-              <input className={`${fieldControl} mt-1.5 file:mr-3 file:py-1.5 file:px-3 file:rounded-ui-lg file:border-0 file:text-xs file:font-semibold file:bg-semantic-accent file:text-white hover:file:bg-semantic-accent-hover`} required type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            </label>
-            <Button type="submit" className="self-end" loading={busy} disabled={!file}>
-              {busy ? 'Checking…' : 'Preview CSV'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      {preview && (
-        <Card>
-          <CardHeader>
-            <div>
-              <h2 className="font-semibold text-semantic-text">Preview: {preview.filename}</h2>
-              <div className="flex flex-wrap items-center gap-2 mt-1">
-                <Badge variant="muted" size="sm">{preview.target}</Badge>
-                <Badge variant="success" size="sm">{preview.imported ?? 0}/{preview.row_count ?? 0} rows</Badge>
-                {(preview.errors?.length ?? 0) > 0 && (
-                  <Badge variant="danger" size="sm">{preview.errors?.length ?? 0} errors</Badge>
-                )}
-                <span className="text-xs text-semantic-text-muted capitalize">Status: {preview.status}</span>
-              </div>
-            </div>
-            {preview.status === 'dry_run' && (
-              <Button
-                loading={busy}
-                disabled={busy || Boolean(preview.errors?.length)}
-                onClick={() => void apply()}
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[140px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
               >
-                Apply import
-              </Button>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {preview.errors?.map((item) => (
-              <Alert key={item} variant="danger">{item}</Alert>
-            ))}
-            {preview.status === 'completed' && (
-              <Alert variant="success">Imported {preview.imported} records.</Alert>
-            )}
-            <div>
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted mb-2">Sample rows</h3>
-              <pre className="max-h-72 overflow-auto rounded-ui-xl bg-slate-950 p-4 text-xs text-slate-100">
-                {JSON.stringify(preview.sample || [], null, 2)}
-              </pre>
+                <option value="all">All statuses</option>
+                <option value="dry_run">Dry run</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+              </select>
             </div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {loading ? (
+              <div className="space-y-2">
+                <Skeleton variant="text" />
+                <Skeleton variant="text" />
+              </div>
+            ) : filteredJobs.length === 0 ? (
+              <EmptyState icon={Inbox} title="No migration runs yet" description="Run a CSV preview above to create your first import job." />
+            ) : (
+              filteredJobs.map((job, index) => (
+                <div
+                  key={job.id}
+                  className="ops-pop flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-4 py-3 transition-all duration-200 hover:border-semantic-accent/40 hover:shadow-ui-sm"
+                  style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+                >
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <span className="font-medium text-semantic-text">{job.filename}</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="muted" size="sm">{job.target}</Badge>
+                      <Badge variant="success" size="sm">{job.imported ?? 0}/{job.row_count ?? 0} rows</Badge>
+                      {(job.errors?.length ?? 0) > 0 && (
+                        <Badge variant="danger" size="sm">{job.errors?.length} errors</Badge>
+                      )}
+                      <span className="text-xs text-semantic-text-muted">{job.id.slice(0, 8)}…</span>
+                    </div>
+                  </div>
+                  <Badge variant={
+                    job.status === 'completed' ? 'success' :
+                    job.status === 'dry_run' ? 'warning' :
+                    job.status === 'failed' ? 'danger' : 'muted'
+                  }>
+                    {job.status}
+                  </Badge>
+                </div>
+              ))
+            )}
           </CardContent>
         </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">Import history</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Track every migration run and its validation result.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              value={filterTarget}
-              onChange={(e) => setFilterTarget(e.target.value)}
-              className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[130px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-            >
-              <option value="all">All targets</option>
-              <option value="leads">Leads</option>
-              <option value="companies">Companies</option>
-              <option value="contacts">Contacts</option>
-            </select>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[140px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-            >
-              <option value="all">All statuses</option>
-              <option value="dry_run">Dry run</option>
-              <option value="completed">Completed</option>
-              <option value="failed">Failed</option>
-            </select>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {loading ? (
-            <div className="space-y-2">
-              <Skeleton variant="text" />
-              <Skeleton variant="text" />
-            </div>
-          ) : filteredJobs.length === 0 ? (
-            <EmptyState icon={Inbox} title="No migration runs yet" description="Run a CSV preview above to create your first import job." />
-          ) : (
-            filteredJobs.map((job) => (
-              <div key={job.id} className="flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-4 py-3">
-                <div className="flex flex-col gap-1 min-w-0">
-                  <span className="font-medium text-semantic-text">{job.filename}</span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="muted" size="sm">{job.target}</Badge>
-                    <Badge variant="success" size="sm">{job.imported ?? 0}/{job.row_count ?? 0} rows</Badge>
-                    {(job.errors?.length ?? 0) > 0 && (
-                      <Badge variant="danger" size="sm">{job.errors?.length} errors</Badge>
-                    )}
-                    <span className="text-xs text-semantic-text-muted">{job.id.slice(0, 8)}…</span>
-                  </div>
-                </div>
-                <Badge variant={
-                  job.status === 'completed' ? 'success' :
-                  job.status === 'dry_run' ? 'warning' :
-                  job.status === 'failed' ? 'danger' : 'muted'
-                }>
-                  {job.status}
-                </Badge>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
+      </div>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Workflows                                                           */
+/* ------------------------------------------------------------------ */
+
+const checkIcons: Record<string, ComponentType<{ className?: string }>> = {
+  lead_qualification: Target,
+  project_health: Activity,
+  invoice_aging: Receipt,
+};
 
 export function WorkflowsPage() {
   const { user } = useAuth();
@@ -2515,6 +2741,7 @@ export function WorkflowsPage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Automation"
         title="Agent Workflows"
@@ -2524,197 +2751,212 @@ export function WorkflowsPage() {
       {message && aiStatus !== 'success' && <Alert variant="success">{message}</Alert>}
 
       {canRunAgent && (
-        <Card className="border-semantic-accent/30 bg-gradient-to-br from-semantic-accent-soft via-semantic-surface to-white">
-          <CardHeader>
-            <div className="flex flex-wrap items-start justify-between gap-4 flex-1">
-              <div>
-                <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-semantic-accent-soft px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-semantic-accent border border-semantic-accent/20">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  AI quote agent
+        <div className="ops-rise">
+          <Card className="relative overflow-hidden border-semantic-accent/30 bg-gradient-to-br from-semantic-accent-soft via-semantic-surface to-white">
+            <FormAccent />
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-4 flex-1">
+                <div>
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-semantic-accent-soft px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-semantic-accent border border-semantic-accent/20">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    AI quote agent
+                  </div>
+                  <h2 className="text-lg font-bold text-semantic-text">Prepare a quote for review</h2>
+                  <p className="mt-1 max-w-2xl text-sm leading-6 text-semantic-text-muted">
+                    The agent reviews the lead, finds relevant workspace knowledge, drafts a priced quote, and checks its totals.
+                  </p>
                 </div>
-                <h2 className="text-lg font-bold text-semantic-text">Prepare a quote for review</h2>
-                <p className="mt-1 max-w-2xl text-sm leading-6 text-semantic-text-muted">
-                  The agent reviews the lead, finds relevant workspace knowledge, drafts a priced quote, and checks its totals.
-                </p>
+                <Link to="/quotes" className="text-sm font-semibold text-semantic-accent underline decoration-indigo-200 underline-offset-4 shrink-0">
+                  Open quote editor
+                </Link>
               </div>
-              <Link to="/quotes" className="text-sm font-semibold text-semantic-accent underline decoration-indigo-200 underline-offset-4 shrink-0">
-                Open quote editor
-              </Link>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {aiStatus === 'idle' && (
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <label className="flex-1 text-xs font-semibold text-semantic-text-muted">
-                  Lead to quote
-                  <select
-                    className={`${fieldControl} mt-1.5`}
-                    value={leadId}
-                    onChange={(e) => setLeadId(e.target.value)}
-                  >
-                    <option value="">Choose an open lead</option>
-                    {leads.filter((lead) => lead.status === 'open').map((lead) => (
-                      <option key={lead.id} value={lead.id}>{lead.title}</option>
-                    ))}
-                  </select>
-                </label>
-                <Button className="self-end" disabled={!leadId} onClick={() => void runQuoteAgent()}>
-                  <Sparkles className="h-4 w-4" />
-                  Run quote agent
-                </Button>
-              </div>
-            )}
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {aiStatus === 'idle' && (
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <label className="flex-1 text-xs font-semibold text-semantic-text-muted">
+                    Lead to quote
+                    <select
+                      className={`${fieldControl} mt-1.5`}
+                      value={leadId}
+                      onChange={(e) => setLeadId(e.target.value)}
+                    >
+                      <option value="">Choose an open lead</option>
+                      {leads.filter((lead) => lead.status === 'open').map((lead) => (
+                        <option key={lead.id} value={lead.id}>{lead.title}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <Button className="self-end" disabled={!leadId} onClick={() => void runQuoteAgent()}>
+                    <Sparkles className="h-4 w-4" />
+                    Run quote agent
+                  </Button>
+                </div>
+              )}
 
-            {aiStatus !== 'idle' && (
-              <div className="space-y-4">
-                <AIProgress
-                  steps={aiSteps}
-                  status={aiStatus as 'running' | 'success' | 'error'}
-                  errorMessage={aiErrorMsg || undefined}
-                  onRetry={aiStatus === 'error' ? retryQuote : undefined}
-                  resultPreview={aiResult ? (
-                    <div className="rounded-ui-xl border border-semantic-success/30 bg-semantic-success-soft/40 p-4">
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div>
-                          <h4 className="font-semibold text-semantic-text">
-                            {aiResult.status === 'completed' ? 'Draft quote saved' : 'Sent to approvals inbox'}
-                          </h4>
-                          <p className="text-sm text-semantic-text-muted mt-1">{aiResult.message}</p>
-                          {aiResult.quoteId && (
-                            <p className="text-xs text-semantic-text-muted mt-2">
-                              Quote ID: <code className="px-1.5 py-0.5 rounded bg-white">{aiResult.quoteId}</code>
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          {aiResult.status === 'completed' && (
-                            <Button variant="secondary" size="sm" onClick={() => navigate('/quotes')}>
-                              Open quotes
+              {aiStatus !== 'idle' && (
+                <div className="space-y-4">
+                  <AIProgress
+                    steps={aiSteps}
+                    status={aiStatus as 'running' | 'success' | 'error'}
+                    errorMessage={aiErrorMsg || undefined}
+                    onRetry={aiStatus === 'error' ? retryQuote : undefined}
+                    resultPreview={aiResult ? (
+                      <div className="ops-pop rounded-ui-xl border border-semantic-success/30 bg-semantic-success-soft/40 p-4">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div>
+                            <h4 className="font-semibold text-semantic-text">
+                              {aiResult.status === 'completed' ? 'Draft quote saved' : 'Sent to approvals inbox'}
+                            </h4>
+                            <p className="text-sm text-semantic-text-muted mt-1">{aiResult.message}</p>
+                            {aiResult.quoteId && (
+                              <p className="text-xs text-semantic-text-muted mt-2">
+                                Quote ID: <code className="px-1.5 py-0.5 rounded bg-white">{aiResult.quoteId}</code>
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            {aiResult.status === 'completed' && (
+                              <Button variant="secondary" size="sm" onClick={() => navigate('/quotes')}>
+                                Open quotes
+                              </Button>
+                            )}
+                            <Button variant="secondary" size="sm" onClick={resetQuote}>
+                              Run another
                             </Button>
-                          )}
-                          <Button variant="secondary" size="sm" onClick={resetQuote}>
-                            Run another
-                          </Button>
+                          </div>
                         </div>
                       </div>
+                    ) : undefined}
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
+        <Card>
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">Operational checks</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Deterministic checks use current workspace records; they do not make AI calls.</p>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {[
+                ['lead_qualification', 'Qualify open leads', 'Score and group leads by completeness.'],
+                ['project_health', 'Review project health', 'Check logged time against project budgets.'],
+                ['invoice_aging', 'Check invoice aging', 'Find outstanding invoices past due.'],
+              ].map(([type, label, description]) => {
+                const isRunning = runningCheck === type;
+                const isDisabled = Boolean(runningCheck);
+                const CheckIcon = checkIcons[type];
+                return (
+                  <Card
+                    key={type}
+                    className={cn(
+                      'transition-all duration-200',
+                      isDisabled
+                        ? 'opacity-80'
+                        : 'hover:-translate-y-0.5 hover:border-semantic-accent/40 hover:shadow-lg'
+                    )}
+                  >
+                    <CardContent
+                      className={cn('space-y-3', isDisabled ? 'cursor-not-allowed' : 'cursor-pointer')}
+                      onClick={() => { if (!isDisabled) void run(type); }}
+                    >
+                      <div className="flex items-center gap-3">
+                        {CheckIcon && (
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-ui-xl bg-semantic-accent-soft text-semantic-accent">
+                            <CheckIcon className="h-[18px] w-[18px]" />
+                          </span>
+                        )}
+                        <h3 className="font-semibold text-semantic-text">{label}</h3>
+                      </div>
+                      <p className="text-xs leading-5 text-semantic-text-muted min-h-[40px]">{description}</p>
+                      {isRunning ? (
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-semantic-accent">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Running…
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-semantic-accent">
+                          Run check
+                          <span>→</span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="ops-rise" style={{ animationDelay: '140ms' }}>
+        <Card>
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">Run history</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Inspect the outcome of recent automations. Expand to see the result payload and agent steps.</p>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-0">
+            <DataTable<WorkflowRun>
+              columns={runColumns}
+              rows={filteredRuns}
+              rowKey={(r) => r.id}
+              filters={filters}
+              filterValues={filterValues}
+              onFilterChange={onFilterChange}
+              sortable
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSortChange={toggleSort}
+              loading={loading}
+              emptyState={<EmptyState icon={Inbox} title="No workflow runs yet" description="Start a quote agent or run an operational check above." />}
+              wrapperClassName="border-0 shadow-none rounded-none"
+              headerClassName="!px-0 !pt-0"
+            />
+            {!loading && filteredRuns.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {filteredRuns.map((item) => (
+                  <details key={item.id} className="rounded-ui-xl border border-semantic-border bg-semantic-surface p-4 group transition-colors hover:border-semantic-accent/40">
+                    <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                      <div>
+                        <span className="font-semibold capitalize text-semantic-text">{item.workflow_type.replaceAll('_', ' ')}</span>
+                        <span className="ml-2 text-xs text-semantic-text-muted">{new Date(item.created_at).toLocaleString()}</span>
+                      </div>
+                      <Badge variant={
+                        item.status === 'completed' ? 'success' :
+                        item.status === 'paused_for_approval' ? 'warning' :
+                        item.status === 'failed' ? 'danger' : 'muted'
+                      }>
+                        {item.status.replaceAll('_', ' ')}
+                      </Badge>
+                    </summary>
+                    <div className="ops-pop mt-4 border-t border-semantic-border pt-4 space-y-4">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-semantic-text-muted mb-2">Result</p>
+                        <pre className="max-h-80 overflow-auto rounded-ui-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+                          {JSON.stringify(item.result_data || {}, null, 2)}
+                        </pre>
+                      </div>
+                      {item.workflow_type === 'quote_agent' && (
+                        <AgentRunDetails runId={item.id} />
+                      )}
                     </div>
-                  ) : undefined}
-                />
+                  </details>
+                ))}
               </div>
             )}
           </CardContent>
         </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">Operational checks</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Deterministic checks use current workspace records; they do not make AI calls.</p>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {[
-              ['lead_qualification', 'Qualify open leads', 'Score and group leads by completeness.'],
-              ['project_health', 'Review project health', 'Check logged time against project budgets.'],
-              ['invoice_aging', 'Check invoice aging', 'Find outstanding invoices past due.'],
-            ].map(([type, label, description]) => {
-              const isRunning = runningCheck === type;
-              const isDisabled = Boolean(runningCheck);
-              return (
-                <Card
-                  key={type}
-                  className={cn(
-                    'transition',
-                    isDisabled
-                      ? 'opacity-80'
-                      : 'hover:-translate-y-0.5 hover:border-semantic-accent/40 hover:shadow-lg'
-                  )}
-                >
-                  <CardContent
-                    className={cn('space-y-3', isDisabled ? 'cursor-not-allowed' : 'cursor-pointer')}
-                    onClick={() => { if (!isDisabled) void run(type); }}
-                  >
-                    <h3 className="font-semibold text-semantic-text">{label}</h3>
-                    <p className="text-xs leading-5 text-semantic-text-muted min-h-[40px]">{description}</p>
-                    {isRunning ? (
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-semantic-accent">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Running…
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-semantic-accent">
-                        Run check
-                        <span>→</span>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">Run history</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Inspect the outcome of recent automations. Expand to see the result payload and agent steps.</p>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-0">
-          <DataTable<WorkflowRun>
-            columns={runColumns}
-            rows={filteredRuns}
-            rowKey={(r) => r.id}
-            filters={filters}
-            filterValues={filterValues}
-            onFilterChange={onFilterChange}
-            sortable
-            sortKey={sortKey}
-            sortDir={sortDir}
-            onSortChange={toggleSort}
-            loading={loading}
-            emptyState={<EmptyState icon={Inbox} title="No workflow runs yet" description="Start a quote agent or run an operational check above." />}
-            wrapperClassName="border-0 shadow-none rounded-none"
-            headerClassName="!px-0 !pt-0"
-          />
-          {!loading && filteredRuns.length > 0 && (
-            <div className="mt-4 space-y-3">
-              {filteredRuns.map((item) => (
-                <details key={item.id} className="rounded-ui-xl border border-semantic-border bg-semantic-surface p-4 group">
-                  <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <span className="font-semibold capitalize text-semantic-text">{item.workflow_type.replaceAll('_', ' ')}</span>
-                      <span className="ml-2 text-xs text-semantic-text-muted">{new Date(item.created_at).toLocaleString()}</span>
-                    </div>
-                    <Badge variant={
-                      item.status === 'completed' ? 'success' :
-                      item.status === 'paused_for_approval' ? 'warning' :
-                      item.status === 'failed' ? 'danger' : 'muted'
-                    }>
-                      {item.status.replaceAll('_', ' ')}
-                    </Badge>
-                  </summary>
-                  <div className="mt-4 border-t border-semantic-border pt-4 space-y-4">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-semantic-text-muted mb-2">Result</p>
-                      <pre className="max-h-80 overflow-auto rounded-ui-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-                        {JSON.stringify(item.result_data || {}, null, 2)}
-                      </pre>
-                    </div>
-                    {item.workflow_type === 'quote_agent' && (
-                      <AgentRunDetails runId={item.id} />
-                    )}
-                  </div>
-                </details>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      </div>
     </div>
   );
 }
@@ -2738,7 +2980,7 @@ function AgentRunDetails({ runId }: { runId: string }) {
       <h3 className="text-xs font-semibold uppercase tracking-wide text-semantic-text-muted mb-2">Agent steps</h3>
       <ol className="divide-y divide-semantic-border rounded-ui-xl border border-semantic-border bg-semantic-surface">
         {steps.map((step) => (
-          <li key={step.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
+          <li key={step.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm transition-colors hover:bg-semantic-surface-muted/50">
             <div className="min-w-0 flex-1">
               <span className="font-semibold text-semantic-text">{step.node_name.replaceAll('_', ' ')}</span>
               <p className="mt-0.5 text-xs text-semantic-text-muted truncate">{step.result_summary}</p>
@@ -2758,6 +3000,10 @@ function AgentRunDetails({ runId }: { runId: string }) {
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Approvals                                                           */
+/* ------------------------------------------------------------------ */
 
 export function ApprovalsPage() {
   const [items, setItems] = useState<ApprovalItem[]>([]);
@@ -2828,6 +3074,7 @@ export function ApprovalsPage() {
 
   return (
     <div className="page-shell space-y-6">
+      <OpsStyles />
       <PageHeader
         eyebrow="Human review"
         title="Approvals Inbox"
@@ -2836,147 +3083,153 @@ export function ApprovalsPage() {
       />
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
-      <Card>
-        <CardHeader>
-          <div>
-            <h2 className="font-semibold text-semantic-text">Review queue</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">Oldest pending items appear first.</p>
-          </div>
-          <div className="flex flex-wrap gap-2 items-center">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {[
-                { value: 'all', label: 'All' },
-                { value: 'timesheet', label: 'Time entries' },
-                { value: 'expense', label: 'Expenses' },
-                { value: 'quote_agent', label: 'Quote drafts' },
-              ].map((opt) => {
-                const active = filterEntity === opt.value;
+      <div className="ops-rise">
+        <Card>
+          <CardHeader>
+            <div>
+              <h2 className="font-semibold text-semantic-text">Review queue</h2>
+              <p className="text-xs text-semantic-text-muted mt-0.5">Oldest pending items appear first.</p>
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { value: 'all', label: 'All' },
+                  { value: 'timesheet', label: 'Time entries' },
+                  { value: 'expense', label: 'Expenses' },
+                  { value: 'quote_agent', label: 'Quote drafts' },
+                ].map((opt) => {
+                  const active = filterEntity === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setFilterEntity(opt.value)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-180ms border',
+                        active
+                          ? 'bg-semantic-accent text-white border-semantic-accent shadow-sm hover:bg-semantic-accent-hover'
+                          : 'border-semantic-border bg-semantic-surface text-semantic-text hover:bg-semantic-surface-muted'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <select
+                value={sortDir}
+                onChange={(e) => setSortDir(e.target.value as 'asc' | 'desc')}
+                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[140px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+              >
+                <option value="asc">Oldest first</option>
+                <option value="desc">Newest first</option>
+              </select>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {loading ? (
+              <div className="space-y-3">
+                <Skeleton variant="card" />
+                <Skeleton variant="card" />
+              </div>
+            ) : filteredItems.length === 0 ? (
+              <EmptyState
+                icon={CheckCircle2}
+                title="You're all caught up"
+                description="No records waiting for approval."
+              />
+            ) : (
+              filteredItems.map((item, index) => {
+                const itemKey = `${item.entity_type}-${item.id}`;
+                const isPending = pending?.key === itemKey;
                 return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setFilterEntity(opt.value)}
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all duration-180ms border',
-                      active
-                        ? 'bg-semantic-accent text-white border-semantic-accent hover:bg-semantic-accent-hover'
-                        : 'border-semantic-border bg-semantic-surface text-semantic-text hover:bg-semantic-surface-muted'
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-            <select
-              value={sortDir}
-              onChange={(e) => setSortDir(e.target.value as 'asc' | 'desc')}
-              className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[140px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-            >
-              <option value="asc">Oldest first</option>
-              <option value="desc">Newest first</option>
-            </select>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {loading ? (
-            <div className="space-y-3">
-              <Skeleton variant="card" />
-              <Skeleton variant="card" />
-            </div>
-          ) : filteredItems.length === 0 ? (
-            <EmptyState
-              icon={CheckCircle2}
-              title="You're all caught up"
-              description="No records waiting for approval."
-            />
-          ) : (
-            filteredItems.map((item) => {
-              const itemKey = `${item.entity_type}-${item.id}`;
-              const isPending = pending?.key === itemKey;
-              return (
-              <Card key={itemKey}>
-                <CardContent className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1 space-y-2.5">
-                    <Badge variant={entityBadgeVariant(item.entity_type)} size="sm">
-                      {entityLabel(item.entity_type)}
-                    </Badge>
-                    <p className="font-semibold text-semantic-text text-base">{item.label}</p>
-                    {item.reason && (
-                      <Alert variant="warning" title="Review flags">
-                        {item.reason}
-                      </Alert>
-                    )}
-                    {item.quote_preview && (
-                      <div className="max-w-2xl rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/40 p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h3 className="font-semibold text-semantic-text">{item.quote_preview.title || 'Quote draft'}</h3>
-                          <span className="font-bold text-semantic-text">
-                            {formatCurrency(item.quote_preview.total_cents || 0, item.quote_preview.currency || 'USD')}
-                          </span>
-                        </div>
-                        <ul className="mt-3 divide-y divide-semantic-border">
-                          {item.quote_preview.line_items?.map((line, index) => (
-                            <li key={`${line.description}-${index}`} className="flex justify-between gap-3 py-2 text-sm">
-                              <span>{line.quantity} × {line.description}</span>
-                              <span className="whitespace-nowrap text-semantic-text-muted">
-                                {formatCurrency(line.quantity * line.unit_price_cents, item.quote_preview?.currency || 'USD')}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                        {item.assumptions && item.assumptions.length > 0 && (
-                          <div className="mt-3 border-t border-semantic-border pt-3">
-                            <p className="text-[11px] font-bold uppercase tracking-wide text-semantic-warning">Draft assumptions</p>
-                            <ul className="mt-1 list-disc pl-4 text-xs leading-5 text-semantic-text-muted space-y-0.5">
-                              {item.assumptions.map((assumption, index) => (
-                                <li key={index}>{assumption}</li>
-                              ))}
-                            </ul>
+                <Card
+                  key={itemKey}
+                  className="ops-pop transition-all duration-200 hover:shadow-ui-lg"
+                  style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+                >
+                  <CardContent className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1 space-y-2.5">
+                      <Badge variant={entityBadgeVariant(item.entity_type)} size="sm">
+                        {entityLabel(item.entity_type)}
+                      </Badge>
+                      <p className="font-semibold text-semantic-text text-base">{item.label}</p>
+                      {item.reason && (
+                        <Alert variant="warning" title="Review flags">
+                          {item.reason}
+                        </Alert>
+                      )}
+                      {item.quote_preview && (
+                        <div className="max-w-2xl rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/40 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="font-semibold text-semantic-text">{item.quote_preview.title || 'Quote draft'}</h3>
+                            <span className="font-bold tabular-nums text-semantic-text">
+                              {formatCurrency(item.quote_preview.total_cents || 0, item.quote_preview.currency || 'USD')}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    )}
-                    {item.amount_cents != null && (
-                      <p className="text-sm font-medium text-semantic-text">
-                        {formatCurrency(item.amount_cents, item.currency || 'USD')}
-                      </p>
-                    )}
-                    <p className="text-xs text-semantic-text-muted">Submitted {new Date(item.created_at).toLocaleString()}</p>
-                    {isPending && item.entity_type === 'quote_agent' && (
-                      <div className="flex items-center gap-2 rounded-ui-xl border border-semantic-accent/30 bg-semantic-accent-soft/50 px-3.5 py-2.5 text-xs font-medium text-semantic-text">
-                        <Sparkles className="h-3.5 w-3.5 animate-pulse text-semantic-accent" />
-                        Applying your decision — the quote agent is finishing its run. This can take up to a minute.
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      variant="primary"
-                      className="bg-semantic-success hover:bg-emerald-700"
-                      loading={isPending && pending?.decision === 'approved'}
-                      disabled={isPending}
-                      onClick={() => void decide(item, 'approved')}
-                    >
-                      {isPending && pending?.decision === 'approved' ? 'Approving…' : 'Approve'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="border-semantic-danger/30 text-semantic-danger hover:bg-semantic-danger-soft"
-                      loading={isPending && pending?.decision === 'rejected'}
-                      disabled={isPending}
-                      onClick={() => void decide(item, 'rejected')}
-                    >
-                      {isPending && pending?.decision === 'rejected' ? 'Rejecting…' : 'Reject'}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-              );
-            })
-          )}
-        </CardContent>
-      </Card>
+                          <ul className="mt-3 divide-y divide-semantic-border">
+                            {item.quote_preview.line_items?.map((line, lineIndex) => (
+                              <li key={`${line.description}-${lineIndex}`} className="flex justify-between gap-3 py-2 text-sm">
+                                <span>{line.quantity} × {line.description}</span>
+                                <span className="whitespace-nowrap tabular-nums text-semantic-text-muted">
+                                  {formatCurrency(line.quantity * line.unit_price_cents, item.quote_preview?.currency || 'USD')}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                          {item.assumptions && item.assumptions.length > 0 && (
+                            <div className="mt-3 border-t border-semantic-border pt-3">
+                              <p className="text-[11px] font-bold uppercase tracking-wide text-semantic-warning">Draft assumptions</p>
+                              <ul className="mt-1 list-disc pl-4 text-xs leading-5 text-semantic-text-muted space-y-0.5">
+                                {item.assumptions.map((assumption, assumptionIndex) => (
+                                  <li key={assumptionIndex}>{assumption}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {item.amount_cents != null && (
+                        <p className="text-sm font-medium tabular-nums text-semantic-text">
+                          {formatCurrency(item.amount_cents, item.currency || 'USD')}
+                        </p>
+                      )}
+                      <p className="text-xs text-semantic-text-muted">Submitted {new Date(item.created_at).toLocaleString()}</p>
+                      {isPending && item.entity_type === 'quote_agent' && (
+                        <div className="flex items-center gap-2 rounded-ui-xl border border-semantic-accent/30 bg-semantic-accent-soft/50 px-3.5 py-2.5 text-xs font-medium text-semantic-text">
+                          <Sparkles className="h-3.5 w-3.5 animate-pulse text-semantic-accent" />
+                          Applying your decision — the quote agent is finishing its run. This can take up to a minute.
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        variant="primary"
+                        className="bg-semantic-success hover:bg-emerald-700"
+                        loading={isPending && pending?.decision === 'approved'}
+                        disabled={isPending}
+                        onClick={() => void decide(item, 'approved')}
+                      >
+                        {isPending && pending?.decision === 'approved' ? 'Approving…' : 'Approve'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="border-semantic-danger/30 text-semantic-danger hover:bg-semantic-danger-soft"
+                        loading={isPending && pending?.decision === 'rejected'}
+                        disabled={isPending}
+                        onClick={() => void decide(item, 'rejected')}
+                      >
+                        {isPending && pending?.decision === 'rejected' ? 'Rejecting…' : 'Reject'}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+                );
+              })
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
