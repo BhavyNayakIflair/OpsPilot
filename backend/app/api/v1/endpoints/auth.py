@@ -5,7 +5,18 @@ from app.core.deps import get_current_user, get_current_membership, get_current_
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.membership import Membership
-from app.schemas.user import UserCreate, UserLogin, UserRead, UserWithRole
+from app.schemas.user import (
+    UserCreate,
+    UserLogin,
+    UserRead,
+    UserWithRole,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
+    VerifyResetTokenRequest,
+    VerifyResetTokenResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
+)
 from app.schemas.token import Token
 from app.services.auth_service import AuthService
 
@@ -53,3 +64,56 @@ async def get_me(
         org_id=tenant.id,
         org_name=tenant.name,
     )
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+async def forgot_password(
+    data: ForgotPasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    client_ip = request.client.host if request.client else None
+    _, reset_token = await AuthService.request_password_reset(
+        db, data.email, ip_address=client_ip
+    )
+    return ForgotPasswordResponse(
+        message="If an account with this email exists, a password reset link has been generated.",
+        reset_token=reset_token,
+    )
+
+
+@router.post("/verify-reset-token", response_model=VerifyResetTokenResponse)
+async def verify_reset_token(
+    data: VerifyResetTokenRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    valid, user, err_msg = await AuthService.verify_password_reset_token(db, data.token)
+    if not valid or not user:
+        return VerifyResetTokenResponse(
+            valid=False,
+            message=err_msg or "Invalid or expired token",
+        )
+    return VerifyResetTokenResponse(
+        valid=True,
+        email=user.email,
+        message="Token is valid",
+    )
+
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+async def reset_password(
+    data: ResetPasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    client_ip = request.client.host if request.client else None
+    await AuthService.reset_password(
+        db,
+        token=data.token,
+        new_password=data.new_password,
+        ip_address=client_ip,
+    )
+    return ResetPasswordResponse(
+        message="Password has been successfully updated. You can now log in with your new password.",
+    )
+

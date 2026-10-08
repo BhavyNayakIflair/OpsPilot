@@ -15,6 +15,8 @@ export const App: React.FC = () => {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<Login />} />
+          <Route path="/reset-password" element={<Login />} />
           <Route path="/quote-accept/:token" element={<QuoteAcceptance />} />
 
           <Route element={<AppLayout />}>

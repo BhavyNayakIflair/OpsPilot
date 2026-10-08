@@ -42,3 +42,32 @@ class UserWithRole(UserRead):
     role: str
     org_id: str
     org_name: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_token: Optional[str] = None
+
+
+class VerifyResetTokenRequest(BaseModel):
+    token: str
+
+
+class VerifyResetTokenResponse(BaseModel):
+    valid: bool
+    email: Optional[str] = None
+    message: Optional[str] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class ResetPasswordResponse(BaseModel):
+    message: str
+

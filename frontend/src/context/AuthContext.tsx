@@ -8,6 +8,9 @@ interface AuthContextType {
   loading: boolean;
   login: (email: string, pass: string) => Promise<void>;
   register: (email: string, pass: string, fullName: string, orgName?: string) => Promise<void>;
+  forgotPassword: (email: string) => Promise<{ message: string; reset_token?: string }>;
+  verifyResetToken: (token: string) => Promise<{ valid: boolean; email?: string; message?: string }>;
+  resetPassword: (token: string, newPassword: string) => Promise<{ message: string }>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -94,6 +97,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
   };
 
+  const forgotPassword = async (email: string) => {
+    return await apiRequest<{ message: string; reset_token?: string }>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  };
+
+  const verifyResetToken = async (token: string) => {
+    return await apiRequest<{ valid: boolean; email?: string; message?: string }>(
+      '/auth/verify-reset-token',
+      {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      }
+    );
+  };
+
+  const resetPassword = async (token: string, newPassword: string) => {
+    return await apiRequest<{ message: string }>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -102,6 +129,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         login,
         register,
+        forgotPassword,
+        verifyResetToken,
+        resetPassword,
         logout,
         refreshUser,
       }}
