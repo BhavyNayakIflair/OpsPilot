@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.gateway.base import LLMProvider
 from app.models.content import DocumentChunk, KnowledgeDocument
 from app.models.organization import Organization
-from app.services.knowledge_service import chunk_text, ingest_document, search_chunks
+from app.services.knowledge_service import answer_rag_question, chunk_text, ingest_document, search_chunks
 
 
 class FakeProvider(LLMProvider):
@@ -60,3 +60,16 @@ async def test_search_is_org_scoped_and_filters_unrelated_queries(db_session):
     assert results
     assert {result.document_id for result in results} == {document_a.id}
     assert not nonsense
+
+
+@pytest.mark.asyncio
+async def test_blank_queries_short_circuit_cleanly(db_session):
+    provider = FakeProvider()
+    org, _ = await _document(db_session, "Tenant blank check", "contract clauses for internal review")
+
+    assert await search_chunks(org.id, "   ", 5, db_session, provider) == []
+    assert await answer_rag_question(org.id, "   ", db_session, provider) == {
+        "answer": "not found in documents",
+        "citations": [],
+        "degraded": False,
+    }

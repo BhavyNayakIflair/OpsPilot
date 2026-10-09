@@ -99,9 +99,10 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
 async def search_chunks(org_id: str, query: str, k: int, db: AsyncSession,
                         provider: LLMProvider) -> list[ChunkResult]:
-    if k < 1:
+    if k < 1 or not query or not query.strip():
         return []
-    query_vectors = await asyncio.to_thread(provider.embed, [query], task_type="knowledge_search", org_id=org_id)
+    normalized_query = query.strip()
+    query_vectors = await asyncio.to_thread(provider.embed, [normalized_query], task_type="knowledge_search", org_id=org_id)
     if len(query_vectors) != 1 or len(query_vectors[0]) != EMBEDDING_DIMENSION:
         raise ProviderError("Embedding provider returned an invalid query vector; expected 768 dimensions")
     query_vector = query_vectors[0]
@@ -163,6 +164,12 @@ async def answer_rag_question(
     - If retrieval confidence < MIN_RELEVANCE, answers 'not found in documents'.
     - Degraded mode: If no generative AI route is available, returns ranked passages with citations.
     """
+    if k < 1 or not question or not question.strip():
+        return {
+            "answer": "not found in documents",
+            "citations": [],
+            "degraded": False,
+        }
     results = await search_chunks(org_id=org_id, query=question, k=k, db=db, provider=provider)
     if not results or results[0].relevance_score < MIN_RELEVANCE:
         return {
