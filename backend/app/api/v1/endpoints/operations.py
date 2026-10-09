@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_tenant, get_current_user, get_current_membership, require_role
@@ -9,9 +10,12 @@ from app.models.membership import Membership, RoleType
 from app.models.crm import Lead
 from app.models.operations import Employee, Project, ProjectTask, TimeEntry, LeaveRequest
 from app.schemas.operations import (EmployeeCreate, EmployeeRead, EmployeeUpdate, ProjectCreate, ProjectRead, ProjectUpdate,
-    TaskCreate, TaskRead, TimeEntryCreate, TimeEntryRead, TimeEntryUpdate, LeaveCreate, LeaveRead, LeaveUpdate)
+    TaskCreate, TaskRead, TaskUpdate, TimeEntryCreate, TimeEntryRead, TimeEntryUpdate, LeaveCreate, LeaveRead, LeaveUpdate)
 
 router = APIRouter()
+
+VALID_TASK_STATUSES = {"todo", "in_progress", "in_review", "done"}
+VALID_TASK_PRIORITIES = {"low", "medium", "high", "urgent"}
 
 
 async def _owned(db, model, object_id, org_id):
@@ -20,8 +24,22 @@ async def _owned(db, model, object_id, org_id):
     return value
 
 
+@router.get("/me", response_model=EmployeeRead)
+async def get_my_employee(org: Organization = Depends(get_current_tenant), user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = await db.scalar(select(Employee).where(Employee.org_id == org.id, Employee.user_id == user.id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="No employee profile is linked to this account")
+    return row
+
+
 @router.get("/people", response_model=list[EmployeeRead])
 async def list_people(org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.FINANCE, RoleType.PROJECT_MANAGER]))):
+    return (await db.scalars(select(Employee).where(Employee.org_id == org.id).order_by(Employee.full_name))).all()
+
+
+@router.get("/people/directory", response_model=list[EmployeeRead])
+async def list_people_directory(org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    # Mirrors /people for lightweight directory UIs and includes linkable account records.
     return (await db.scalars(select(Employee).where(Employee.org_id == org.id).order_by(Employee.full_name))).all()
 
 
@@ -35,7 +53,12 @@ async def create_person(data: EmployeeCreate, org: Organization = Depends(get_cu
 @router.patch("/people/{employee_id}", response_model=EmployeeRead)
 async def update_person(employee_id: str, data: EmployeeUpdate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.FINANCE]))):
     row = await _owned(db, Employee, employee_id, org.id)
-    for key, value in data.model_dump(exclude_unset=True).items(): setattr(row, key, value)
+    changes = data.model_dump(exclude_unset=True)
+    if "user_id" in changes and changes["user_id"]:
+        user_id = changes["user_id"]
+        if not await db.scalar(select(User).join(User.memberships).where(User.id == user_id, Membership.org_id == org.id)):
+            raise HTTPException(status_code=404, detail="User is not a member of this organization")
+    for key, value in changes.items(): setattr(row, key, value)
     await db.commit(); await db.refresh(row); return row
 
 
@@ -79,6 +102,36 @@ async def delete_project(project_id: str, org: Organization = Depends(get_curren
     await db.commit()
 
 
+@router.get("/tasks", response_model=list[TaskRead])
+async def list_all_tasks(
+    org: Organization = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+    project_id: str | None = Query(default=None, alias="project_id"),
+    assignee_id: str | None = Query(default=None, alias="assignee_id"),
+    status: str | None = Query(default=None, alias="status"),
+    priority: str | None = Query(default=None, alias="priority"),
+    q: str | None = Query(default=None, alias="q"),
+):
+    query = select(ProjectTask).where(ProjectTask.org_id == org.id)
+    if project_id:
+        await _owned(db, Project, project_id, org.id)
+        query = query.where(ProjectTask.project_id == project_id)
+    if assignee_id:
+        await _owned(db, Employee, assignee_id, org.id)
+        query = query.where(ProjectTask.assignee_id == assignee_id)
+    if status:
+        if status not in VALID_TASK_STATUSES:
+            raise HTTPException(status_code=422, detail="Unsupported task status")
+        query = query.where(ProjectTask.status == status)
+    if priority:
+        if priority not in VALID_TASK_PRIORITIES:
+            raise HTTPException(status_code=422, detail="Unsupported task priority")
+        query = query.where(ProjectTask.priority == priority)
+    if q:
+        query = query.where(ProjectTask.title.ilike(f"%{q}%"))
+    return (await db.scalars(query.order_by(ProjectTask.created_at.desc()))).all()
+
+
 @router.get("/projects/{project_id}/tasks", response_model=list[TaskRead])
 async def list_tasks(project_id: str, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     await _owned(db, Project, project_id, org.id)
@@ -89,16 +142,27 @@ async def list_tasks(project_id: str, org: Organization = Depends(get_current_te
 async def create_task(project_id: str, data: TaskCreate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     await _owned(db, Project, project_id, org.id)
     if data.assignee_id: await _owned(db, Employee, data.assignee_id, org.id)
-    row = ProjectTask(org_id=org.id, project_id=project_id, **data.model_dump()); db.add(row); await db.commit(); await db.refresh(row); return row
+    if data.status not in VALID_TASK_STATUSES: raise HTTPException(status_code=422, detail="Unsupported task status")
+    if data.priority not in VALID_TASK_PRIORITIES: raise HTTPException(status_code=422, detail="Unsupported task priority")
+    next_number = (await db.scalar(select(func.max(ProjectTask.task_number)).where(ProjectTask.org_id == org.id, ProjectTask.project_id == project_id))) or 0
+    row = ProjectTask(org_id=org.id, project_id=project_id, task_number=next_number + 1, **data.model_dump())
+    if row.status == "done" and row.completed_at is None:
+        row.completed_at = datetime.now(timezone.utc)
+    db.add(row); await db.commit(); await db.refresh(row); return row
 
 
 @router.patch("/tasks/{task_id}", response_model=TaskRead)
-async def update_task(task_id: str, data: dict, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
+async def update_task(task_id: str, data: TaskUpdate, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db)):
     row = await _owned(db, ProjectTask, task_id, org.id)
-    allowed = {"title", "description", "status", "estimate_minutes", "assignee_id"}
-    if set(data) - allowed: raise HTTPException(status_code=422, detail="Unsupported task fields")
-    if data.get("assignee_id"): await _owned(db, Employee, data["assignee_id"], org.id)
-    for key, value in data.items(): setattr(row, key, value)
+    changes = data.model_dump(exclude_unset=True)
+    if "assignee_id" in changes and changes["assignee_id"] is not None: await _owned(db, Employee, changes["assignee_id"], org.id)
+    if "status" in changes and changes["status"] not in VALID_TASK_STATUSES: raise HTTPException(status_code=422, detail="Unsupported task status")
+    if "priority" in changes and changes["priority"] not in VALID_TASK_PRIORITIES: raise HTTPException(status_code=422, detail="Unsupported task priority")
+    for key, value in changes.items(): setattr(row, key, value)
+    if row.status == "done" and row.completed_at is None:
+        row.completed_at = datetime.now(timezone.utc)
+    elif row.status != "done":
+        row.completed_at = None
     await db.commit(); await db.refresh(row); return row
 
 
@@ -163,10 +227,17 @@ async def delete_time_entry(entry_id: str, user: User = Depends(get_current_user
 
 
 @router.patch("/timesheets/{entry_id}/approval", response_model=TimeEntryRead)
-async def approve_time_entry(entry_id: str, data: dict, org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.APPROVER, RoleType.PROJECT_MANAGER, RoleType.FINANCE]))):
+async def approve_time_entry(entry_id: str, data: dict, user: User = Depends(get_current_user), org: Organization = Depends(get_current_tenant), db: AsyncSession = Depends(get_db), _role: Membership = Depends(require_role([RoleType.APPROVER, RoleType.PROJECT_MANAGER, RoleType.FINANCE]))):
     status_value = data.get("status")
     if status_value not in ("approved", "rejected"): raise HTTPException(status_code=422, detail="Status must be approved or rejected")
-    row = await _owned(db, TimeEntry, entry_id, org.id); row.approval_status = status_value
+    row = await _owned(db, TimeEntry, entry_id, org.id)
+    row.approval_status = status_value
+    row.reviewed_by_user_id = user.id
+    row.reviewed_at = datetime.now(timezone.utc)
+    if status_value == "rejected":
+        row.rejection_reason = data.get("rejection_reason") or "Rejected by reviewer"
+    else:
+        row.rejection_reason = None
     await db.commit(); await db.refresh(row); return row
 
 
