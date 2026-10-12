@@ -147,7 +147,7 @@ async def create_task(project_id: str, data: TaskCreate, org: Organization = Dep
     next_number = (await db.scalar(select(func.max(ProjectTask.task_number)).where(ProjectTask.org_id == org.id, ProjectTask.project_id == project_id))) or 0
     row = ProjectTask(org_id=org.id, project_id=project_id, task_number=next_number + 1, **data.model_dump())
     if row.status == "done" and row.completed_at is None:
-        row.completed_at = datetime.now(timezone.utc)
+        row.completed_at = datetime.utcnow()
     db.add(row); await db.commit(); await db.refresh(row); return row
 
 
@@ -160,7 +160,7 @@ async def update_task(task_id: str, data: TaskUpdate, org: Organization = Depend
     if "priority" in changes and changes["priority"] not in VALID_TASK_PRIORITIES: raise HTTPException(status_code=422, detail="Unsupported task priority")
     for key, value in changes.items(): setattr(row, key, value)
     if row.status == "done" and row.completed_at is None:
-        row.completed_at = datetime.now(timezone.utc)
+        row.completed_at = datetime.utcnow()
     elif row.status != "done":
         row.completed_at = None
     await db.commit(); await db.refresh(row); return row
@@ -233,7 +233,7 @@ async def approve_time_entry(entry_id: str, data: dict, user: User = Depends(get
     row = await _owned(db, TimeEntry, entry_id, org.id)
     row.approval_status = status_value
     row.reviewed_by_user_id = user.id
-    row.reviewed_at = datetime.now(timezone.utc)
+    row.reviewed_at = datetime.utcnow()
     if status_value == "rejected":
         row.rejection_reason = data.get("rejection_reason") or "Rejected by reviewer"
     else:
