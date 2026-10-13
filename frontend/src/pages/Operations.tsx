@@ -3,6 +3,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/toast';
 import { Link, useNavigate } from 'react-router-dom';
 import { Search, Sparkles, CheckCircle2, Inbox, Loader2, ChevronDown, Target, Activity, Receipt } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
@@ -178,6 +179,7 @@ function expenseCategoryColor(cat: string): 'default' | 'ai' | 'success' | 'warn
 /* ------------------------------------------------------------------ */
 
 export function ProjectsPage() {
+  const toast = useToast();
   const [rows, setRows] = useState<Project[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [tasks, setTasks] = useState<Record<string, Task[]>>({});
@@ -226,6 +228,7 @@ export function ProjectsPage() {
   const saveProject = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const isEditing = Boolean(editing);
       await apiRequest(editing ? `/operations/projects/${editing.id}` : '/operations/projects', {
         method: editing ? 'PATCH' : 'POST',
         body: JSON.stringify({
@@ -236,8 +239,9 @@ export function ProjectsPage() {
       });
       setName(''); setBudgetHours(''); setBudget(''); setEditing(null);
       await load();
+      toast.success(isEditing ? 'Project updated.' : 'Project created.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save project');
+      toast.error(err instanceof Error ? err.message : 'Unable to save project');
     }
   };
 
@@ -261,8 +265,9 @@ export function ProjectsPage() {
     try {
       await apiRequest(`/operations/projects/${projectId}/tasks`, { method: 'POST', body: JSON.stringify({ title }) });
       await refreshTasks(projectId);
+      toast.success('Task created.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to add task');
+      toast.error(e instanceof Error ? e.message : 'Unable to add task');
     }
   };
 
@@ -270,8 +275,9 @@ export function ProjectsPage() {
     try {
       await apiRequest(`/operations/tasks/${task.id}`, { method: 'PATCH', body: JSON.stringify(values) });
       await refreshTasks(task.project_id);
+      toast.success('Task updated.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to update task');
+      toast.error(e instanceof Error ? e.message : 'Unable to update task');
     }
   };
 
@@ -280,8 +286,9 @@ export function ProjectsPage() {
     try {
       await apiRequest(`/operations/tasks/${task.id}`, { method: 'DELETE' });
       await refreshTasks(task.project_id);
+      toast.success('Task deleted.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to delete task');
+      toast.error(e instanceof Error ? e.message : 'Unable to delete task');
     }
   };
 
@@ -290,8 +297,9 @@ export function ProjectsPage() {
     try {
       await apiRequest(`/operations/projects/${project.id}`, { method: 'DELETE' });
       await load();
+      toast.success('Project archived.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to archive project');
+      toast.error(e instanceof Error ? e.message : 'Unable to archive project');
     }
   };
 
@@ -582,6 +590,7 @@ export function ProjectsPage() {
 
 export function TimesheetsPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const canApprove = ['owner', 'approver', 'project_manager', 'finance'].includes(user?.role || '');
   const [entries, setEntries] = useState<Entry[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -629,6 +638,7 @@ export function TimesheetsPage() {
   const add = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const isEditing = Boolean(editingId);
       await apiRequest(editingId ? `/operations/timesheets/${editingId}` : '/operations/timesheets', {
         method: editingId ? 'PATCH' : 'POST',
         body: JSON.stringify({
@@ -641,8 +651,9 @@ export function TimesheetsPage() {
       });
       setHours(''); setDescription(''); setEditingId('');
       await load();
+      toast.success(isEditing ? 'Time entry updated.' : 'Time entry submitted for approval.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save time');
+      toast.error(err instanceof Error ? err.message : 'Unable to save time');
     }
   };
 
@@ -653,8 +664,9 @@ export function TimesheetsPage() {
         body: JSON.stringify({ status }),
       });
       await load();
+      toast.success(status === 'approved' ? 'Time entry approved.' : status === 'rejected' ? 'Time entry rejected.' : 'Time entry approval updated.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to update approval');
+      toast.error(err instanceof Error ? err.message : 'Unable to update approval');
     }
   };
 
@@ -663,8 +675,9 @@ export function TimesheetsPage() {
     try {
       await apiRequest(`/operations/timesheets/${entry.id}`, { method: 'DELETE' });
       await load();
+      toast.success('Time entry deleted.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to delete time entry');
+      toast.error(e instanceof Error ? e.message : 'Unable to delete time entry');
     }
   };
 
@@ -926,6 +939,7 @@ export function TimesheetsPage() {
 /* ------------------------------------------------------------------ */
 
 export function PeoplePage() {
+  const toast = useToast();
   const { user } = useAuth();
   const canManagePeople = ['owner', 'finance'].includes(user?.role || '');
   const [rows, setRows] = useState<Employee[]>([]);
@@ -960,6 +974,7 @@ export function PeoplePage() {
   const add = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const isEditing = Boolean(editing);
       await apiRequest(editing ? `/operations/people/${editing.id}` : '/operations/people', {
         method: editing ? 'PATCH' : 'POST',
         body: JSON.stringify({
@@ -972,8 +987,9 @@ export function PeoplePage() {
       });
       setName(''); setEmail(''); setTitle(''); setBilling(''); setCost(''); setEditing(null);
       await load();
+      toast.success(isEditing ? 'Team member updated.' : 'Team member created.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save teammate');
+      toast.error(err instanceof Error ? err.message : 'Unable to save teammate');
     }
   };
 
@@ -982,8 +998,9 @@ export function PeoplePage() {
     try {
       await apiRequest(`/operations/people/${person.id}`, { method: 'DELETE' });
       await load();
+      toast.success('Team member deactivated.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to deactivate teammate');
+      toast.error(e instanceof Error ? e.message : 'Unable to deactivate teammate');
     }
   };
 
@@ -991,8 +1008,9 @@ export function PeoplePage() {
     try {
       await apiRequest(`/operations/people/${person.id}`, { method: 'PATCH', body: JSON.stringify({ is_active: true }) });
       await load();
+      toast.success('Team member reactivated.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to reactivate teammate');
+      toast.error(e instanceof Error ? e.message : 'Unable to reactivate teammate');
     }
   };
 
@@ -1181,6 +1199,7 @@ export function PeoplePage() {
 }
 
 function LeaveWidget({ employees }: { employees: Employee[] }) {
+  const toast = useToast();
   const [items, setItems] = useState<LeaveRequest[]>([]);
   const [employeeId, setEmployeeId] = useState('');
   const [start, setStart] = useState('');
@@ -1208,6 +1227,7 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
   const add = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const isEditing = Boolean(editing);
       const payload = editing
         ? { start_date: start, end_date: end, reason: reason || null }
         : { employee_id: employeeId, start_date: start, end_date: end, reason: reason || null };
@@ -1217,8 +1237,9 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
       });
       setStart(''); setEnd(''); setReason(''); setEditing(null); setError('');
       await load();
+      toast.success(isEditing ? 'Leave request updated.' : 'Leave request submitted.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save leave request');
+      toast.error(err instanceof Error ? err.message : 'Unable to save leave request');
     }
   };
 
@@ -1227,8 +1248,9 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
     try {
       await apiRequest(`/operations/leave-requests/${item.id}`, { method: 'DELETE' });
       await load();
+      toast.success('Leave request deleted.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to delete leave request');
+      toast.error(e instanceof Error ? e.message : 'Unable to delete leave request');
     }
   };
 
@@ -1353,6 +1375,7 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
 /* ------------------------------------------------------------------ */
 
 export function InvoicingPage() {
+  const toast = useToast();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [client, setClient] = useState('');
@@ -1402,6 +1425,7 @@ export function InvoicingPage() {
   const create = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const isEditing = Boolean(editing);
       const payload: Record<string, unknown> = {
         client_name: client,
         currency: editing?.currency || 'USD',
@@ -1421,8 +1445,9 @@ export function InvoicingPage() {
       });
       setClient(''); setProjectId(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTax('0'); setEditing(null);
       await load();
+      toast.success(isEditing ? 'Invoice updated.' : 'Invoice created.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save invoice');
+      toast.error(err instanceof Error ? err.message : 'Unable to save invoice');
     }
   };
 
@@ -1435,8 +1460,9 @@ export function InvoicingPage() {
         body: JSON.stringify({ amount_cents: remaining, paid_date: new Date().toISOString().slice(0, 10), method: 'other' }),
       });
       await load();
+      toast.success('Payment recorded.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to record payment');
+      toast.error(err instanceof Error ? err.message : 'Unable to record payment');
     }
   };
 
@@ -1444,8 +1470,9 @@ export function InvoicingPage() {
     try {
       await apiRequest(`/billing/invoices/${invoice.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'sent' }) });
       await load();
+      toast.success('Invoice marked as sent.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to mark invoice sent');
+      toast.error(err instanceof Error ? err.message : 'Unable to mark invoice sent');
     }
   };
 
@@ -1453,8 +1480,9 @@ export function InvoicingPage() {
     try {
       await apiRequest(`/billing/invoices/${invoice.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'void' }) });
       await load();
+      toast.success('Invoice voided.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to void invoice');
+      toast.error(err instanceof Error ? err.message : 'Unable to void invoice');
     }
   };
 
@@ -1478,8 +1506,9 @@ export function InvoicingPage() {
     try {
       await apiRequest(`/billing/invoices/${invoice.id}`, { method: 'DELETE' });
       await load();
+      toast.success('Invoice deleted.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to delete invoice');
+      toast.error(e instanceof Error ? e.message : 'Unable to delete invoice');
     }
   };
 
@@ -1738,6 +1767,7 @@ export function InvoicingPage() {
 /* ------------------------------------------------------------------ */
 
 export function ExpensesPage() {
+  const toast = useToast();
   const { user } = useAuth();
   const canReview = ['owner', 'finance', 'approver'].includes(user?.role || '');
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -1776,6 +1806,7 @@ export function ExpensesPage() {
   const create = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const isEditing = Boolean(editing);
       await apiRequest(editing ? `/billing/expenses/${editing.id}` : '/billing/expenses', {
         method: editing ? 'PATCH' : 'POST',
         body: JSON.stringify({
@@ -1789,8 +1820,9 @@ export function ExpensesPage() {
       });
       setVendor(''); setDescription(''); setCategory('general'); setAmount(''); setEditing(null);
       await load();
+      toast.success(isEditing ? 'Expense updated.' : 'Expense submitted for review.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to submit expense');
+      toast.error(err instanceof Error ? err.message : 'Unable to submit expense');
     }
   };
 
@@ -1801,8 +1833,9 @@ export function ExpensesPage() {
         body: JSON.stringify({ status }),
       });
       await load();
+      toast.success(status === 'approved' ? 'Expense approved.' : status === 'rejected' ? 'Expense rejected.' : 'Expense review updated.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to review expense');
+      toast.error(err instanceof Error ? err.message : 'Unable to review expense');
     }
   };
 
@@ -1811,8 +1844,9 @@ export function ExpensesPage() {
     try {
       await apiRequest(`/billing/expenses/${expense.id}`, { method: 'DELETE' });
       await load();
+      toast.success('Expense deleted.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to delete expense');
+      toast.error(e instanceof Error ? e.message : 'Unable to delete expense');
     }
   };
 
@@ -2027,6 +2061,7 @@ export function ExpensesPage() {
 /* ------------------------------------------------------------------ */
 
 export function DocumentsPage() {
+  const toast = useToast();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [query, setQuery] = useState('');
   const [title, setTitle] = useState('');
@@ -2060,14 +2095,16 @@ export function DocumentsPage() {
   const save = async (e: FormEvent) => {
     e.preventDefault();
     try {
+      const isEditing = Boolean(editingId);
       await apiRequest(editingId ? `/documents/${editingId}` : '/documents', {
         method: editingId ? 'PUT' : 'POST',
         body: JSON.stringify({ title, category, content }),
       });
       setTitle(''); setContent(''); setEditingId('');
       await load('');
+      toast.success(isEditing ? 'Document updated.' : 'Document created.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to save document');
+      toast.error(e instanceof Error ? e.message : 'Unable to save document');
     }
   };
 
@@ -2084,8 +2121,9 @@ export function DocumentsPage() {
     try {
       await apiRequest(`/documents/${id}`, { method: 'DELETE' });
       await load();
+      toast.success('Document deleted.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to delete document');
+      toast.error(e instanceof Error ? e.message : 'Unable to delete document');
     }
   };
 
@@ -2317,6 +2355,7 @@ export function DocumentsPage() {
 /* ------------------------------------------------------------------ */
 
 export function MigrationPage() {
+  const toast = useToast();
   const [jobs, setJobs] = useState<MigrationJob[]>([]);
   const [target, setTarget] = useState('leads');
   const [file, setFile] = useState<File | null>(null);
@@ -2358,8 +2397,9 @@ export function MigrationPage() {
     try {
       setPreview(await apiRequest<MigrationJob>('/migration/dry-run', { method: 'POST', body: form }));
       await load();
+      toast.info('CSV preview is ready. Review it before applying the import.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to preview import');
+      toast.error(err instanceof Error ? err.message : 'Unable to preview import');
     } finally {
       setBusy(false);
     }
@@ -2372,8 +2412,9 @@ export function MigrationPage() {
       const done = await apiRequest<MigrationJob>(`/migration/jobs/${preview.id}/apply`, { method: 'POST' });
       setPreview({ ...preview, ...done });
       await load();
+      toast.success(`Import completed: ${done.imported ?? 0} records imported.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to apply import');
+      toast.error(e instanceof Error ? e.message : 'Unable to apply import');
     } finally {
       setBusy(false);
     }
@@ -2556,6 +2597,7 @@ const checkIcons: Record<string, ComponentType<{ className?: string }>> = {
 
 export function WorkflowsPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const navigate = useNavigate();
   const canRunAgent = ['owner', 'sales', 'project_manager'].includes(user?.role || '');
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
@@ -2563,7 +2605,6 @@ export function WorkflowsPage() {
   const [leadId, setLeadId] = useState('');
   const [runningCheck, setRunningCheck] = useState('');
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
 
   const [aiStatus, setAiStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
@@ -2599,13 +2640,13 @@ export function WorkflowsPage() {
 
   const run = async (type: string) => {
     if (runningCheck) return;
-    setRunningCheck(type); setError(''); setMessage('');
+    setRunningCheck(type); setError('');
     try {
       await apiRequest(`/workflows/${type}`, { method: 'POST' });
-      setMessage('Workflow finished and was added to run history.');
       await load();
+      toast.success('Workflow completed and added to run history.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to run workflow');
+      toast.error(e instanceof Error ? e.message : 'Unable to run workflow');
     } finally {
       setRunningCheck('');
     }
@@ -2617,7 +2658,6 @@ export function WorkflowsPage() {
     setAiErrorMsg('');
     setAiResult(null);
     setError('');
-    setMessage('');
     try {
       const result = await apiRequest<WorkflowRun>('/workflows/quote-agent/run', {
         method: 'POST',
@@ -2626,9 +2666,11 @@ export function WorkflowsPage() {
       if (result.status === 'paused_for_approval') {
         setAiStatus('success');
         setAiResult({ status: 'paused_for_approval', message: 'The agent flagged the quote and sent it to the Approvals Inbox. No quote was saved before review.' });
+        toast.info('Quote flagged and sent to the Approvals Inbox for review.');
       } else if (result.status === 'completed') {
         setAiStatus('success');
         setAiResult({ status: 'completed', message: 'The agent completed its checks and saved a draft quote for human review.', quoteId: result.result_data.quote_id });
+        toast.success('Quote draft created for human review.');
       } else {
         throw new Error(result.result_data.error || `Workflow status: ${result.status}`);
       }
@@ -2638,6 +2680,7 @@ export function WorkflowsPage() {
       setAiStatus('error');
       setAiErrorMsg(msg);
       setError(msg);
+      toast.error(msg);
     }
   };
 
@@ -2748,7 +2791,6 @@ export function WorkflowsPage() {
         description="Run operational checks or prepare a quote with the AI agent."
       />
       {error && aiStatus !== 'error' && <Alert variant="danger" title="Error">{error}</Alert>}
-      {message && aiStatus !== 'success' && <Alert variant="success">{message}</Alert>}
 
       {canRunAgent && (
         <div className="ops-rise">
@@ -3006,6 +3048,7 @@ function AgentRunDetails({ runId }: { runId: string }) {
 /* ------------------------------------------------------------------ */
 
 export function ApprovalsPage() {
+  const toast = useToast();
   const [items, setItems] = useState<ApprovalItem[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -3037,8 +3080,10 @@ export function ApprovalsPage() {
         body: JSON.stringify({ decision }),
       });
       await load();
+      const decisionLabel = decision === 'approved' ? 'approved' : 'rejected';
+      toast.success(`${entityLabel(item.entity_type)} ${decisionLabel}.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to update approval');
+      toast.error(e instanceof Error ? e.message : 'Unable to update approval');
     } finally {
       setPending(null);
     }

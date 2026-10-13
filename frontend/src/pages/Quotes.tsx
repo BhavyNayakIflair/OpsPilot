@@ -13,6 +13,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { DataTable, type DataTableColumn, type DataTableFilterDef } from '../components/ui/DataTable';
 import AIProgress from '../components/ui/AIProgress';
 import { AIGatewayBanner, type AIGatewayStatus } from '../components/ui/AIGatewayBanner';
+import { useToast } from '../context/toast';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -57,6 +58,7 @@ const quoteStyles = `
 
 export function Quotes() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [cards, setCards] = useState<RateCard[]>([]);
@@ -146,6 +148,7 @@ export function Quotes() {
     setBusy(true);
     setError('');
     try {
+      const isEditing = Boolean(editingId);
       await apiRequest(editingId ? `/quotes/${editingId}` : '/quotes', {
         method: editingId ? 'PUT' : 'POST',
         body: JSON.stringify({
@@ -167,8 +170,9 @@ export function Quotes() {
       });
       resetEditor();
       await load();
+      toast.success(isEditing ? 'Quote updated.' : 'Quote created.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create quote');
+      toast.error(err instanceof Error ? err.message : 'Could not save quote');
     } finally {
       setBusy(false);
     }
@@ -270,6 +274,7 @@ export function Quotes() {
       } else {
         setAiGatewayStatus('idle');
       }
+      toast.success('AI quote draft is ready for review.');
     } catch (err) {
       clearTimeout(t1);
       clearTimeout(t2);
@@ -323,15 +328,19 @@ export function Quotes() {
       });
       if (run.status === 'completed') {
         setAgentStatus(`Agent completed its review and saved a draft quote (${run.steps.length} steps).`);
+        toast.success('Quote draft created for human review.');
         await load();
       } else if (run.status === 'paused_for_approval') {
         setAgentStatus('The agent flagged this quote. It is waiting in the Approvals Inbox; no quote was saved yet.');
+        toast.info('Quote flagged and sent to the Approvals Inbox for review.');
       } else {
         throw new Error(run.result_data.error || `Quote agent ended with status: ${run.status}`);
       }
     } catch (err) {
-      setAgentError(err instanceof Error ? err.message : 'Quote agent could not complete');
-      setError(err instanceof Error ? err.message : 'Quote agent could not complete');
+      const message = err instanceof Error ? err.message : 'Quote agent could not complete';
+      setAgentError(message);
+      setError(message);
+      toast.error(message);
     } finally {
       setAgentBusy(false);
     }
@@ -355,7 +364,7 @@ export function Quotes() {
         return next;
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to open PDF');
+      toast.error(err instanceof Error ? err.message : 'Unable to open PDF');
     }
   };
 
@@ -363,9 +372,9 @@ export function Quotes() {
     const url = `${window.location.origin}/quote-accept/${quote.accept_token}`;
     try {
       await navigator.clipboard.writeText(url);
-      setError('Acceptance link copied to clipboard.');
+      toast.success('Acceptance link copied to clipboard.');
     } catch {
-      setError(url);
+      toast.error(`Could not copy the link. Copy it manually: ${url}`);
     }
   };
 
@@ -403,8 +412,9 @@ export function Quotes() {
     try {
       await apiRequest(`/quotes/${id}`, { method: 'DELETE' });
       await load();
+      toast.success('Quote deleted.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not delete quote');
+      toast.error(e instanceof Error ? e.message : 'Could not delete quote');
     }
   };
 
@@ -1182,6 +1192,7 @@ export function Quotes() {
 
 export function QuoteAcceptance() {
   const { token } = useParams();
+  const toast = useToast();
   const [accepted, setAccepted] = useState(false);
   const [message, setMessage] = useState('Review this proposal, then confirm below to accept it.');
   const [busy, setBusy] = useState(false);
@@ -1195,8 +1206,12 @@ export function QuoteAcceptance() {
       const result = await apiRequest<{ status: string }>('/quotes/accept/' + encodeURIComponent(token));
       setAccepted(result.status === 'accepted');
       setMessage(result.status === 'accepted' ? 'Quote accepted. Thank you.' : `Quote status: ${result.status}`);
+      if (result.status === 'accepted') toast.success('Quote accepted. Thank you.');
+      else toast.warning(`Quote was not accepted; current status is ${result.status}.`);
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : 'This quote could not be accepted.');
+      const errorMessage = e instanceof Error ? e.message : 'This quote could not be accepted.';
+      setMessage(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setBusy(false);
     }
@@ -1248,11 +1263,11 @@ export function QuoteAcceptance() {
 }
 
 function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () => Promise<void> }) {
+  const toast = useToast();
   const [name, setName] = useState('');
   const [currency, setCurrency] = useState('USD');
   const [rate, setRate] = useState('');
   const [cardDescription, setCardDescription] = useState('');
-  const [message, setMessage] = useState('');
   const [editingId, setEditingId] = useState('');
   const clear = () => {
     setEditingId('');
@@ -1265,10 +1280,10 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
     if (!window.confirm('Delete this rate card? Rate cards used by quotes are protected.')) return;
     try {
       await apiRequest(`/quotes/rate-cards/${id}`, { method: 'DELETE' });
-      setMessage('Rate card deleted.');
       await onCreated();
+      toast.success('Rate card deleted.');
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Unable to delete rate card');
+      toast.error(err instanceof Error ? err.message : 'Unable to delete rate card');
     }
   };
   const rcColumns: DataTableColumn<RateCard>[] = [
@@ -1337,6 +1352,7 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
           onSubmit={async (e) => {
             e.preventDefault();
             try {
+              const isEditing = Boolean(editingId);
               await apiRequest(
                 editingId ? `/quotes/rate-cards/${editingId}` : '/quotes/rate-cards',
                 {
@@ -1350,10 +1366,10 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
                 }
               );
               clear();
-              setMessage('Rate card saved.');
               await onCreated();
+              toast.success(isEditing ? 'Rate card updated.' : 'Rate card created.');
             } catch (err) {
-              setMessage(err instanceof Error ? err.message : 'Unable to save rate card');
+              toast.error(err instanceof Error ? err.message : 'Unable to save rate card');
             }
           }}
         >
@@ -1413,11 +1429,6 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
             )}
           </div>
         </form>
-        {message && (
-          <Alert variant="info" dismissible onDismiss={() => setMessage('')}>
-            {message}
-          </Alert>
-        )}
         <DataTable<RateCard>
           columns={rcColumns}
           rows={cards}

@@ -12,6 +12,7 @@ import { DataTable } from '../components/ui/DataTable';
 import type { DataTableColumn, DataTableFilterDef } from '../components/ui/DataTable';
 import { Card } from '../components/ui/Card';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/toast';
 import { apiRequest } from '../lib/api';
 
 function cn(...inputs: ClassValue[]) {
@@ -132,6 +133,7 @@ const FormCard = ({
 );
 
 export function CRM() {
+  const toast = useToast();
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('Pipeline');
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -243,9 +245,10 @@ export function CRM() {
         method: 'PATCH',
         body: JSON.stringify({ stage_id: stageId }),
       });
+      toast.success('Lead moved.');
     } catch (e) {
       setLeads(before);
-      setError(e instanceof Error ? e.message : 'Could not move lead');
+      toast.error(e instanceof Error ? e.message : 'Could not move lead');
     }
   };
 
@@ -254,8 +257,9 @@ export function CRM() {
     try {
       await apiRequest(path, { method: 'DELETE' });
       await reload();
+      toast.success(`${label} deleted.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : `Could not delete ${label}`);
+      toast.error(e instanceof Error ? e.message : `Could not delete ${label}`);
     }
   };
 
@@ -269,6 +273,7 @@ export function CRM() {
       value_cents: Math.round(Number(leadValue || 0) * 100),
     };
     try {
+      const isEditing = Boolean(editingLead);
       await apiRequest(
         editingLead ? `/crm/leads/${editingLead.id}` : '/crm/leads',
         {
@@ -289,8 +294,9 @@ export function CRM() {
       setLeadCompany('');
       setLeadValue('');
       await reload();
+      toast.success(isEditing ? 'Lead updated.' : 'Lead created.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save lead');
+      toast.error(err instanceof Error ? err.message : 'Could not save lead');
     } finally {
       setSaving(false);
     }
@@ -301,6 +307,7 @@ export function CRM() {
     setSaving(true);
     setError('');
     try {
+      const isEditing = Boolean(editingActivity);
       await apiRequest(
         editingActivity ? `/crm/activities/${editingActivity.id}` : '/crm/activities',
         {
@@ -317,8 +324,9 @@ export function CRM() {
       setActivitySubject('');
       setActivityBody('');
       await reload();
+      toast.success(isEditing ? 'Activity updated.' : 'Activity created.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save activity');
+      toast.error(e instanceof Error ? e.message : 'Could not save activity');
     } finally {
       setSaving(false);
     }
@@ -329,6 +337,7 @@ export function CRM() {
     setSaving(true);
     setError('');
     try {
+      const isEditing = Boolean(editingCompany);
       await apiRequest(
         editingCompany ? `/crm/companies/${editingCompany.id}` : '/crm/companies',
         {
@@ -347,8 +356,9 @@ export function CRM() {
       setCompanyNotes('');
       setEditingCompany(null);
       await reload();
+      toast.success(isEditing ? 'Company updated.' : 'Company created.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save company');
+      toast.error(err instanceof Error ? err.message : 'Could not save company');
     } finally {
       setSaving(false);
     }
@@ -359,6 +369,7 @@ export function CRM() {
     setSaving(true);
     setError('');
     try {
+      const isEditing = Boolean(editingContact);
       await apiRequest(
         editingContact ? `/crm/contacts/${editingContact.id}` : '/crm/contacts',
         {
@@ -381,8 +392,9 @@ export function CRM() {
       setContactCompany('');
       setEditingContact(null);
       await reload();
+      toast.success(isEditing ? 'Contact updated.' : 'Contact created.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save contact');
+      toast.error(err instanceof Error ? err.message : 'Could not save contact');
     } finally {
       setSaving(false);
     }

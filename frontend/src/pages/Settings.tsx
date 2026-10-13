@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Shield, Users } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Card, CardHeader, CardContent, PageHeader, Button, Badge, Alert } from '../components/ui/';
+import { Card, CardHeader, CardContent, PageHeader, Button, Badge } from '../components/ui/';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/toast';
 import { apiRequest } from '../lib/api';
 import type { Locale, Organization, RoleType } from '../types/auth';
 import { supportedLocales, useTranslation, type TranslationKey } from '../i18n';
@@ -21,10 +22,6 @@ interface Member {
   full_name: string;
   created_at: string;
 }
-
-type SettingsMessage =
-  | { text: string; type: 'success' | 'error' }
-  | { key: TranslationKey; values?: Record<string, string | number>; type: 'success' | 'error' };
 
 const roleTranslationKeys: Record<RoleType, TranslationKey> = {
   employee: 'employee',
@@ -45,17 +42,17 @@ const localeTranslationKeys: Record<Locale, TranslationKey> = {
 
 export const Settings: React.FC = () => {
   const { user, refreshUser } = useAuth();
+  const toast = useToast();
   const { t } = useTranslation();
   const [org, setOrg] = useState<Organization | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<RoleType>('employee');
-  const [msg, setMsg] = useState<SettingsMessage | null>(null);
   const [loading, setLoading] = useState(false);
   const [orgName, setOrgName] = useState('');
   const [currency, setCurrency] = useState('USD');
-  const [fullName, setFullName] = useState(user?.full_name || '');
-  const [locale, setLocale] = useState<Locale>(user?.locale || 'en');
+  const [fullName, setFullName] = useState(() => user?.full_name ?? '');
+  const [locale, setLocale] = useState<Locale>(() => user?.locale ?? 'en');
 
   const fetchOrgData = async () => {
     try {
@@ -65,22 +62,15 @@ export const Settings: React.FC = () => {
       setCurrency(orgData.currency);
       const membersData = await apiRequest<Member[]>('/organizations/members');
       setMembers(membersData);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to load org details:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to load organization settings.');
     }
   };
 
-  useEffect(() => {
-    fetchOrgData();
+  React.useEffect(() => {
+    void fetchOrgData();
   }, []);
-
-  useEffect(() => {
-    if (user?.full_name) setFullName(user.full_name);
-  }, [user?.full_name]);
-
-  useEffect(() => {
-    if (user?.locale) setLocale(user.locale);
-  }, [user?.locale]);
 
   const sortedMembers = useMemo(() => {
     return [...members].sort((a, b) => a.full_name.localeCompare(b.full_name));
@@ -89,19 +79,15 @@ export const Settings: React.FC = () => {
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setMsg(null);
     try {
       await apiRequest('/users/profile', {
         method: 'PUT',
         body: JSON.stringify({ full_name: fullName, locale }),
       });
       await refreshUser();
-      setMsg({ key: 'profileUpdated', type: 'success' });
+      toast.success(t('profileUpdated'));
     } catch (err) {
-      setMsg({
-        text: err instanceof Error ? err.message : t('couldNotUpdateProfile'),
-        type: 'error',
-      });
+      toast.error(err instanceof Error ? err.message : t('couldNotUpdateProfile'));
     } finally {
       setLoading(false);
     }
@@ -110,20 +96,16 @@ export const Settings: React.FC = () => {
   const saveOrganization = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setMsg(null);
     try {
       const updated = await apiRequest<Organization>('/organizations/current', {
         method: 'PUT',
         body: JSON.stringify({ name: orgName, currency }),
       });
       setOrg(updated);
-      setMsg({ key: 'workspaceUpdated', type: 'success' });
       await refreshUser();
+      toast.success(t('workspaceUpdated'));
     } catch (err) {
-      setMsg({
-        text: err instanceof Error ? err.message : t('couldNotUpdateWorkspace'),
-        type: 'error',
-      });
+      toast.error(err instanceof Error ? err.message : t('couldNotUpdateWorkspace'));
     } finally {
       setLoading(false);
     }
@@ -131,18 +113,17 @@ export const Settings: React.FC = () => {
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMsg(null);
     setLoading(true);
     try {
       await apiRequest('/organizations/members', {
         method: 'POST',
         body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
       });
-      setMsg({ key: 'inviteUpdated', values: { email: inviteEmail, role: t(roleTranslationKeys[inviteRole]) }, type: 'success' });
+      toast.success(t('inviteUpdated', { email: inviteEmail, role: t(roleTranslationKeys[inviteRole]) }));
       setInviteEmail('');
       await fetchOrgData();
-    } catch (err: any) {
-      setMsg({ text: err.message || t('failedInvite'), type: 'error' });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('failedInvite'));
     } finally {
       setLoading(false);
     }
@@ -152,13 +133,10 @@ export const Settings: React.FC = () => {
     if (!window.confirm(t('removeMemberConfirm', { name: member.full_name }))) return;
     try {
       await apiRequest(`/organizations/members/${member.id}`, { method: 'DELETE' });
-      setMsg({ key: 'memberRemoved', values: { name: member.full_name }, type: 'success' });
+      toast.success(t('memberRemoved', { name: member.full_name }));
       await fetchOrgData();
     } catch (err) {
-      setMsg({
-        text: err instanceof Error ? err.message : t('couldNotRemoveMember'),
-        type: 'error',
-      });
+      toast.error(err instanceof Error ? err.message : t('couldNotRemoveMember'));
     }
   };
 
@@ -176,16 +154,6 @@ export const Settings: React.FC = () => {
         title={t('workspaceSettings')}
         description={t('settingsDescription')}
       />
-
-      {msg && (
-        <Alert
-          variant={msg.type === 'success' ? 'success' : 'danger'}
-          dismissible
-          onDismiss={() => setMsg(null)}
-        >
-          {'key' in msg ? t(msg.key, msg.values) : msg.text}
-        </Alert>
-      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
@@ -367,20 +335,10 @@ export const Settings: React.FC = () => {
                                     method: 'POST',
                                     body: JSON.stringify({ email: m.email, role }),
                                   });
-                                  setMsg({
-                                    key: 'profileUpdatedRole',
-                                    values: { name: m.full_name, role: t(roleTranslationKeys[role]) },
-                                    type: 'success',
-                                  });
+                                  toast.success(t('profileUpdatedRole', { name: m.full_name, role: t(roleTranslationKeys[role]) }));
                                   await fetchOrgData();
                                 } catch (err) {
-                                  setMsg({
-                                    text:
-                                      err instanceof Error
-                                        ? err.message
-                                        : t('couldNotUpdateRole'),
-                                    type: 'error',
-                                  });
+                                  toast.error(err instanceof Error ? err.message : t('couldNotUpdateRole'));
                                 } finally {
                                   setLoading(false);
                                 }

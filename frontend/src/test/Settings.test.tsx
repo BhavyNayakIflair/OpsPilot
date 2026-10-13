@@ -46,6 +46,13 @@ describe('Settings language preference', () => {
     });
   });
 
+  it('prefills the profile form with the current user values', async () => {
+    render(<Settings />);
+
+    expect(await screen.findByDisplayValue('Test User')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Language' })).toHaveValue('en');
+  });
+
   it('saves the selected language as a personal profile preference', async () => {
     render(<Settings />);
 
