@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Card, CardHeader, CardContent, PageHeader, Badge, Skeleton, Alert, EmptyState } from '../components/ui/';
+import { Card, CardHeader, CardContent, Badge, Skeleton, Alert, EmptyState } from '../components/ui/';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 
@@ -77,12 +77,51 @@ const AnimatedNumber = ({ value, decimals = 0 }: { value: number; decimals?: num
   return <>{current.toFixed(decimals)}</>;
 };
 
+/*
+ * Layout note: the app sidebar eats ~260px, so the *content* area is much
+ * narrower than the browser viewport. Breakpoints below are tuned for the
+ * content width (viewport minus sidebar) so 90%, 100% and 110% browser zoom
+ * all produce a balanced layout with no large empty gaps.
+ */
 const dashStyles = `
 @keyframes dash-rise {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: none; }
 }
 .dash-rise { animation: dash-rise 560ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.dash-kpi-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 560px) {
+  .dash-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1200px) {
+  .dash-kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.dash-panel-grid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1100px) {
+  .dash-panel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-span-full { grid-column: 1 / -1; }
+}
+.dash-panel-grid > * { min-width: 0; }
+
+.dash-chip-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 760px) {
+  .dash-chip-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dash-rise { animation: none; }
 }
@@ -118,7 +157,7 @@ const KpiCard = ({ name, value, description, icon: Icon, tone, to, progress, ind
   return (
     <Link
       to={to}
-      className="dash-rise group block rounded-ui-2xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-accent-ring"
+      className="dash-rise group block min-w-0 rounded-ui-2xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-accent-ring"
       style={{ animationDelay: `${index * 70}ms` }}
     >
       <Card className="relative h-full overflow-hidden transition-all duration-200 group-hover:-translate-y-0.5 group-hover:shadow-ui-lg">
@@ -132,12 +171,12 @@ const KpiCard = ({ name, value, description, icon: Icon, tone, to, progress, ind
         <CardContent>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-xs font-semibold text-semantic-text-muted">{name}</div>
+              <div className="truncate text-xs font-semibold text-semantic-text-muted">{name}</div>
               <div className="mt-2 font-display text-3xl font-extrabold tabular-nums text-semantic-text sm:text-4xl">
                 <AnimatedNumber value={value} />
               </div>
             </div>
-            <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-ui-xl', styles.tile)}>
+            <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-ui-xl transition-transform duration-200 group-hover:scale-105', styles.tile)}>
               <Icon className="h-5 w-5" />
             </div>
           </div>
@@ -245,7 +284,7 @@ const BillableRing = ({ billableHours, totalHours }: { billableHours: number; to
           <span className="text-[11px] font-medium text-semantic-text-muted">billable</span>
         </div>
       </div>
-      <dl className="grid w-full max-w-[220px] gap-3 text-sm">
+      <dl className="grid w-full max-w-[240px] gap-3 text-sm">
         <div className="flex items-center justify-between gap-3 rounded-ui-xl bg-semantic-surface-muted/60 px-3 py-2">
           <dt className="flex items-center gap-2 text-semantic-text-muted">
             <span className="h-2.5 w-2.5 rounded-full bg-semantic-accent" />
@@ -282,9 +321,9 @@ const ProjectRow = ({ project, usedMinutes }: { project: Project; usedMinutes: n
   const hasFinancialBudget = project.budget_amount_cents > 0;
   const pct = hasTimeBudget ? Math.min(100, (usedMinutes / budgetMinutes) * 100) : 0;
   return (
-    <div className="border-b border-semantic-border/60 py-2.5 last:border-0">
-      <div className="flex items-center justify-between gap-2 text-sm">
-        <div className="flex min-w-0 items-center gap-2">
+    <div className="-mx-2 rounded-ui-xl border-b border-semantic-border/60 px-2 py-3 transition-colors last:border-0 hover:bg-semantic-surface-muted/60">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="truncate font-semibold text-semantic-text">{project.name}</span>
           <Badge variant="muted">{project.status.charAt(0).toUpperCase() + project.status.slice(1)}</Badge>
         </div>
@@ -315,6 +354,31 @@ const ProjectRow = ({ project, usedMinutes }: { project: Project; usedMinutes: n
           />
         </div>
       )}
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/* Hero header + stat chips                                            */
+/* ------------------------------------------------------------------ */
+
+type ChipTone = 'accent' | 'warning' | 'danger';
+
+const chipToneStyles: Record<ChipTone, { value: string; dot: string }> = {
+  accent: { value: 'text-semantic-accent', dot: 'bg-semantic-accent' },
+  warning: { value: 'text-amber-600 dark:text-amber-400', dot: 'bg-amber-500' },
+  danger: { value: 'text-rose-600 dark:text-rose-400', dot: 'bg-rose-500' },
+};
+
+const StatChip = ({ label, value, tone }: { label: string; value: number; tone: ChipTone }) => {
+  const styles = chipToneStyles[tone];
+  return (
+    <div className="min-w-0 rounded-ui-xl border border-semantic-border/70 bg-semantic-surface/80 px-3.5 py-2.5 backdrop-blur-sm">
+      <div className="flex items-center gap-2">
+        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', styles.dot)} />
+        <span className="truncate text-[10px] font-bold uppercase tracking-wider text-semantic-text-muted">{label}</span>
+      </div>
+      <div className={cn('mt-1 font-display text-xl font-extrabold tabular-nums leading-none', styles.value)}>{value}</div>
     </div>
   );
 };
@@ -379,11 +443,11 @@ export const Dashboard = () => {
         .join(' · ')
     : null;
 
-  const statChips = [
-    { label: 'Open leads', value: activeLeads.length, tone: 'accent' as const },
-    { label: 'Active projects', value: activeProjects.length, tone: 'accent' as const },
-    { label: 'Pending time entries', value: pendingEntries.length, tone: 'warning' as const },
-    { label: 'Approvals needed', value: approvals.length, tone: 'danger' as const },
+  const statChips: { label: string; value: number; tone: ChipTone }[] = [
+    { label: 'Open leads', value: activeLeads.length, tone: 'accent' },
+    { label: 'Active projects', value: activeProjects.length, tone: 'accent' },
+    { label: 'Pending time entries', value: pendingEntries.length, tone: 'warning' },
+    { label: 'Approvals needed', value: approvals.length, tone: 'danger' },
   ];
 
   const cards: Omit<KpiCardProps, 'index'>[] = [
@@ -447,19 +511,27 @@ export const Dashboard = () => {
   const firstName = user?.full_name?.split(' ')[0] || 'there';
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="page-shell mx-auto w-full max-w-[1600px] space-y-6">
       <style>{dashStyles}</style>
 
-      <PageHeader
-        eyebrow="Workspace overview"
-        title={`Good to see you, ${firstName}`}
-        description={
-          <>
-            Live activity for <span className="font-semibold text-semantic-accent">{user?.org_name || 'your workspace'}</span>. Here&rsquo;s what needs attention today.
-          </>
-        }
-        primaryAction={
-          <div className="flex flex-wrap gap-2">
+      {/* Hero: title + actions on one row, stat chips spanning the full width below */}
+      <header className="dash-rise relative overflow-hidden rounded-ui-2xl border border-semantic-border/70 bg-semantic-surface p-5 shadow-ui-sm sm:p-6">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-semantic-accent/10 blur-3xl"
+        />
+        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between lg:gap-8">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-semantic-accent">Workspace overview</p>
+            <h1 className="mt-2 font-display text-2xl font-extrabold leading-tight tracking-tight text-semantic-text sm:text-3xl xl:text-4xl">
+              Good to see you, {firstName}
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm text-semantic-text-muted">
+              Live activity for <span className="font-semibold text-semantic-accent">{user?.org_name || 'your workspace'}</span>. Here&rsquo;s what needs attention today.
+            </p>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap gap-2">
             <Link
               to="/crm"
               className={cn(
@@ -483,9 +555,14 @@ export const Dashboard = () => {
               Review approvals
             </Link>
           </div>
-        }
-        statChips={statChips}
-      />
+        </div>
+
+        <div className="dash-chip-grid relative mt-5">
+          {statChips.map((chip) => (
+            <StatChip key={chip.label} {...chip} />
+          ))}
+        </div>
+      </header>
 
       {/* Live status + refresh */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -520,12 +597,12 @@ export const Dashboard = () => {
 
       {loading ? (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="dash-kpi-grid">
             {[0, 1, 2, 3].map((i) => (
               <Skeleton key={i} variant="stat-tile" />
             ))}
           </div>
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className="dash-panel-grid">
             <Skeleton variant="card" />
             <Skeleton variant="card" />
           </div>
@@ -533,23 +610,23 @@ export const Dashboard = () => {
       ) : (
         <>
           {/* KPI row: numbers count up, bars fill in, whole card links to its page */}
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="dash-kpi-grid">
             {cards.map((card, index) => (
               <KpiCard key={card.name} index={index} {...card} />
             ))}
           </section>
 
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className="dash-panel-grid">
             <div className="dash-rise" style={{ animationDelay: '280ms' }}>
               <Card className="h-full">
                 <CardHeader>
-                  <div>
+                  <div className="min-w-0">
                     <h2 className="font-bold text-semantic-text">Recent leads</h2>
                     <p className="mt-1 text-xs text-semantic-text-muted">
                       {pipelineLabel ? `${pipelineLabel} in open pipeline` : 'Opportunities in progress'}
                     </p>
                   </div>
-                  <Link to="/crm" className="text-xs font-semibold text-semantic-accent">
+                  <Link to="/crm" className="shrink-0 text-xs font-semibold text-semantic-accent hover:underline">
                     View pipeline &rarr;
                   </Link>
                 </CardHeader>
@@ -602,11 +679,11 @@ export const Dashboard = () => {
             <div className="dash-rise" style={{ animationDelay: '350ms' }}>
               <Card className="h-full">
                 <CardHeader>
-                  <div>
+                  <div className="min-w-0">
                     <h2 className="font-bold text-semantic-text">Project time</h2>
                     <p className="mt-1 text-xs text-semantic-text-muted">Hours vs time budget; project value shown separately</p>
                   </div>
-                  <Link to="/projects" className="text-xs font-semibold text-semantic-accent">
+                  <Link to="/projects" className="shrink-0 text-xs font-semibold text-semantic-accent hover:underline">
                     Manage projects &rarr;
                   </Link>
                 </CardHeader>
@@ -665,16 +742,16 @@ export const Dashboard = () => {
               </Card>
             </div>
 
-            <div className="dash-rise lg:col-span-2" style={{ animationDelay: '560ms' }}>
+            <div className="dash-rise dash-span-full" style={{ animationDelay: '560ms' }}>
               <Card>
                 <CardHeader>
-                  <div>
+                  <div className="min-w-0">
                     <h2 className="font-bold text-semantic-text">Recent approvals</h2>
                     <p className="mt-1 text-xs text-semantic-text-muted">
                       Time, expenses, and drafts awaiting review
                     </p>
                   </div>
-                  <Link to="/approvals" className="text-xs font-semibold text-semantic-accent">
+                  <Link to="/approvals" className="shrink-0 text-xs font-semibold text-semantic-accent hover:underline">
                     View all &rarr;
                   </Link>
                 </CardHeader>
