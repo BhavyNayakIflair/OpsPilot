@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Sparkles, FileText, Calendar, CheckCircle2, Trash2, ExternalLink, Edit3 } from 'lucide-react';
+import { Sparkles, FileText, Calendar, CheckCircle2, Trash2, ExternalLink, Edit3, Search, ArrowUp, ArrowDown, ArrowUpDown, Plus, CreditCard } from 'lucide-react';
 import { apiRequest } from '../lib/api';
 import { Card, CardHeader, CardContent, CardFooter } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -10,7 +10,6 @@ import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Alert } from '../components/ui/Alert';
 import { EmptyState } from '../components/ui/EmptyState';
-import { DataTable, type DataTableColumn, type DataTableFilterDef } from '../components/ui/DataTable';
 import AIProgress from '../components/ui/AIProgress';
 import { AIGatewayBanner, type AIGatewayStatus } from '../components/ui/AIGatewayBanner';
 import { useToast } from '../context/toast';
@@ -54,7 +53,273 @@ const quoteStyles = `
 @media (prefers-reduced-motion: reduce) {
   .quote-rise, .quote-pop, .quote-flash { animation: none; }
 }
+
+.quote-cq { container-type: inline-size; }
+.quote-form-grid { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
+.quote-line-grid { grid-template-columns: minmax(0, 1fr); }
+.quote-rate-grid { display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 600px) {
+  .quote-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quote-span-2, .quote-span-all { grid-column: 1 / -1; }
+  .quote-line-grid { grid-template-columns: minmax(0, 2fr) 110px minmax(0, 1fr) auto; }
+  .quote-rate-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); }
+}
+/* ---- Responsive grid list (reacts to the CONTENT width, not the browser width) ---- */
+.rgrid-cq { container-type: inline-size; }
+.rgrid-head { display: none; }
+.rgrid-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  padding: 1rem;
+  align-items: start;
+}
+.rgrid-cell { min-width: 0; }
+.rgrid-cell[data-role='primary'] { grid-column: 1 / -1; order: -1; }
+.rgrid-cell[data-role='actions'] { grid-column: 1 / -1; }
+.rgrid-cell[data-label]::before {
+  content: attr(data-label);
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+.rgrid-cell:empty { display: none; }
+.rgrid-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; }
+.rgrid-end { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+@container (min-width: 800px) {
+  .rgrid-cq:not([data-wide='lg']) .rgrid-head, .rgrid-cq:not([data-wide='lg']) .rgrid-row {
+    display: grid;
+    grid-template-columns: var(--rgrid-cols);
+    column-gap: 1rem;
+    align-items: center;
+  }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-head { padding: 0.7rem 1.25rem; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-row { padding: 0.85rem 1.25rem; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell[data-role='primary'] { grid-column: auto; order: 0; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell[data-role='actions'] { grid-column: auto; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell[data-label]::before { display: none; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell:empty { display: block; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell[data-align='right'], .rgrid-cq:not([data-wide='lg']) .rgrid-head > [data-align='right'] { text-align: right; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-actions { justify-content: flex-end; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-end { align-items: flex-end; }
+}
+@container (min-width: 900px) {
+  .rgrid-cq[data-wide='lg'] .rgrid-head, .rgrid-cq[data-wide='lg'] .rgrid-row {
+    display: grid;
+    grid-template-columns: var(--rgrid-cols);
+    column-gap: 1rem;
+    align-items: center;
+  }
+  .rgrid-cq[data-wide='lg'] .rgrid-head { padding: 0.7rem 1.25rem; }
+  .rgrid-cq[data-wide='lg'] .rgrid-row { padding: 0.85rem 1.25rem; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell[data-role='primary'] { grid-column: auto; order: 0; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell[data-role='actions'] { grid-column: auto; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell[data-label]::before { display: none; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell:empty { display: block; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell[data-align='right'], .rgrid-cq[data-wide='lg'] .rgrid-head > [data-align='right'] { text-align: right; }
+  .rgrid-cq[data-wide='lg'] .rgrid-actions { justify-content: flex-end; }
+  .rgrid-cq[data-wide='lg'] .rgrid-end { align-items: flex-end; }
+}
 `;
+
+/* ------------------------------------------------------------------ */
+/* Responsive list: table on wide content, stacked cards on narrow.    */
+/* Layout follows the content width (container query), so it stays     */
+/* tidy at 90% / 100% / 110% browser zoom with the sidebar open and    */
+/* never needs a horizontal scrollbar.                                 */
+/* ------------------------------------------------------------------ */
+
+type GridColumn<T> = {
+  key: string;
+  header: string;
+  /** CSS grid track for the wide layout, e.g. 'minmax(0, 2fr)' or '200px' */
+  track: string;
+  /** 'primary' = full-width title row on narrow layouts, 'actions' = full-width button row */
+  role?: 'primary' | 'actions';
+  align?: 'right';
+  sortKey?: string;
+  render: (row: T) => ReactNode;
+};
+
+type ToolbarFilter = {
+  key: string;
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+};
+
+function GridToolbar({
+  search,
+  onSearch,
+  searchPlaceholder = 'Search…',
+  filters = [],
+  sortValue,
+  sortOptions,
+  onSortChange,
+}: {
+  search?: string;
+  onSearch?: (value: string) => void;
+  searchPlaceholder?: string;
+  filters?: ToolbarFilter[];
+  sortValue?: string;
+  sortOptions?: { value: string; label: string }[];
+  onSortChange?: (value: string) => void;
+}) {
+  const labelClass = 'flex min-w-[140px] flex-[1_1_150px] flex-col text-[10px] font-bold uppercase tracking-wider text-semantic-text-muted sm:max-w-[220px]';
+  return (
+    <div className="flex flex-wrap items-end gap-3 border-b border-semantic-border p-3 sm:p-4">
+      {onSearch && (
+        <div className="relative min-w-[200px] flex-[2_1_220px]">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-semantic-text-muted" />
+          <input
+            type="text"
+            aria-label={searchPlaceholder}
+            placeholder={searchPlaceholder}
+            value={search ?? ''}
+            onChange={(e) => onSearch(e.target.value)}
+            className={cn(field, 'pl-9')}
+          />
+        </div>
+      )}
+      {filters.map((f) => (
+        <label key={f.key} className={labelClass}>
+          {f.label}
+          <select className={`${field} mt-1`} value={f.value} onChange={(e) => f.onChange(e.target.value)}>
+            {f.options.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+      ))}
+      {sortOptions && onSortChange && (
+        <label className={labelClass}>
+          Sort by
+          <select className={`${field} mt-1`} value={sortValue ?? ''} onChange={(e) => onSortChange(e.target.value)}>
+            {sortOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function ResponsiveGrid<T>({
+  columns,
+  rows,
+  rowKey,
+  emptyState,
+  loading = false,
+  sortKey = null,
+  sortDir = null,
+  onSort,
+  toolbar,
+  footer,
+  wideAt = 'md',
+}: {
+  columns: GridColumn<T>[];
+  rows: T[];
+  rowKey: (row: T) => string;
+  emptyState: ReactNode;
+  loading?: boolean;
+  sortKey?: string | null;
+  sortDir?: 'asc' | 'desc' | null;
+  onSort?: (key: string) => void;
+  toolbar?: ReactNode;
+  footer?: ReactNode;
+  /** Content width where the table layout kicks in: 'md' = 800px, 'lg' = 900px (use for dense tables). */
+  wideAt?: 'md' | 'lg';
+}) {
+  const tableStyle = { '--rgrid-cols': columns.map((c) => c.track).join(' ') } as CSSProperties;
+  return (
+    <div data-wide={wideAt} className="rgrid-cq overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface shadow-ui-sm">
+      {toolbar}
+      <div role="table" style={tableStyle}>
+        <div
+          role="row"
+          className="rgrid-head border-b border-semantic-border bg-semantic-surface-muted/50 text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted"
+        >
+          {columns.map((col) => {
+            const sk = col.sortKey;
+            const active = !!sk && sortKey === sk;
+            return (
+              <div
+                key={col.key}
+                role="columnheader"
+                data-align={col.align}
+                aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+              >
+                {sk && onSort ? (
+                  <button
+                    type="button"
+                    onClick={() => onSort(sk)}
+                    className={cn(
+                      'inline-flex items-center gap-1 font-bold uppercase tracking-wider transition-colors hover:text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border',
+                      active && 'text-semantic-accent'
+                    )}
+                  >
+                    {col.header}
+                    {active ? (
+                      sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                    ) : (
+                      <ArrowUpDown className="h-3 w-3 opacity-50" />
+                    )}
+                  </button>
+                ) : (
+                  col.header
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} aria-hidden="true" className="space-y-2 border-b border-semantic-border/60 p-4 last:border-0">
+              <div className="h-4 w-2/3 animate-pulse rounded bg-semantic-surface-muted" />
+              <div className="h-3 w-1/3 animate-pulse rounded bg-semantic-surface-muted" />
+            </div>
+          ))
+        ) : rows.length === 0 ? (
+          <div className="p-6">{emptyState}</div>
+        ) : (
+          rows.map((row) => (
+            <div
+              key={rowKey(row)}
+              role="row"
+              className="rgrid-row border-b border-semantic-border/60 transition-colors last:border-0 hover:bg-semantic-surface-muted/50"
+            >
+              {columns.map((col) => (
+                <div
+                  key={col.key}
+                  role="cell"
+                  className="rgrid-cell"
+                  data-role={col.role}
+                  data-align={col.align}
+                  data-label={col.role ? undefined : col.header}
+                >
+                  {col.render(row)}
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+      {footer && (
+        <div className="border-t border-semantic-border bg-semantic-surface-muted/30 px-4 py-2.5 text-xs text-semantic-text-muted sm:px-5">
+          {footer}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 export function Quotes() {
   const navigate = useNavigate();
@@ -92,6 +357,7 @@ export function Quotes() {
   const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({ status: '', currency: '' });
   const [sortKey, setSortKey] = useState<string | null>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>('desc');
+  const [view, setView] = useState<'quotes' | 'rates'>('quotes');
 
   // Scroll targets
   const editorRef = useRef<HTMLDivElement>(null);
@@ -129,6 +395,12 @@ export function Quotes() {
     setEditorFlash(true);
     window.setTimeout(() => setEditorFlash(false), 1200);
   }, []);
+
+  // Jump straight to the Rate cards tab (they used to be hidden at the very bottom of the page).
+  const openRateCards = () => {
+    setView('rates');
+    requestAnimationFrame(() => scrollToElement(listRef.current));
+  };
 
   const chooseCard = (id: string) => {
     setCardId(id);
@@ -529,27 +801,31 @@ export function Quotes() {
     return rows;
   }, [quotes, search, filterValues, sortKey, sortDir, leadLookup]);
 
-  const filters: DataTableFilterDef[] = [
+  const statusFilter = filterValues['status'];
+  const currencyFilter = filterValues['currency'];
+  const toolbarFilters: ToolbarFilter[] = [
     {
       key: 'status',
       label: 'Status',
-      type: 'dropdown',
+      value: typeof statusFilter === 'string' ? statusFilter : '',
+      onChange: (v) => setFilterValues((prev) => ({ ...prev, status: v })),
       options: [
+        { value: '', label: 'All statuses' },
         { value: 'draft', label: 'Draft' },
         { value: 'accepted', label: 'Accepted' },
         { value: 'void', label: 'Void' },
       ],
-      placeholder: 'All statuses',
     },
     {
       key: 'currency',
       label: 'Currency',
-      type: 'dropdown',
-      options: currencies.map((c) => ({ value: c, label: c })),
-      placeholder: 'All currencies',
+      value: typeof currencyFilter === 'string' ? currencyFilter : '',
+      onChange: (v) => setFilterValues((prev) => ({ ...prev, currency: v })),
+      options: [{ value: '', label: 'All currencies' }, ...currencies.map((c) => ({ value: c, label: c }))],
     },
   ];
 
+  // Header click cycles desc -> asc -> default (same behaviour as before).
   const handleSortChange = (key: string) => {
     if (sortKey === key) {
       if (sortDir === 'desc') setSortDir('asc');
@@ -561,78 +837,77 @@ export function Quotes() {
     }
   };
 
-  const columns: DataTableColumn<Quote>[] = [
+  // Sort dropdown (works on narrow layouts where there are no column headers).
+  const sortOptions = [
+    { value: '', label: 'Default order' },
+    { value: 'created_at:desc', label: 'Newest first' },
+    { value: 'created_at:asc', label: 'Oldest first' },
+    { value: 'total_cents:desc', label: 'Highest total' },
+    { value: 'total_cents:asc', label: 'Lowest total' },
+  ];
+  const sortSelectValue = sortKey && sortDir ? `${sortKey}:${sortDir}` : '';
+  const handleSortSelect = (value: string) => {
+    if (!value) { setSortKey(null); setSortDir(null); return; }
+    const [key, dir] = value.split(':');
+    setSortKey(key);
+    setSortDir(dir === 'asc' ? 'asc' : 'desc');
+  };
+
+  const columns: GridColumn<Quote>[] = [
     {
       key: 'title',
-      header: 'Title',
-      sortable: false,
-      widthClass: 'min-w-[240px]',
-      render: (row) => (
-        <div className="min-w-0">
-          <div className="font-semibold text-semantic-text truncate">{row.title}</div>
-          <div className="mt-0.5 text-xs text-semantic-text-muted truncate">
-            {row.line_items.map((l) => `${l.description}`).join(' · ')}
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'lead_id',
-      header: 'Linked Lead',
-      sortable: false,
-      widthClass: 'min-w-[180px]',
+      header: 'Quote',
+      track: 'minmax(0, 2.6fr)',
+      role: 'primary',
       render: (row) => {
         const lead = row.lead_id ? leadLookup[row.lead_id] : null;
-        if (!lead) return <span className="text-semantic-text-muted text-xs">—</span>;
+        const summary = row.line_items.map((l) => l.description).join(' · ');
         return (
-          <Link
-            to="/crm"
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-semantic-accent hover:underline"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span className="truncate">{lead.title}</span>
-          </Link>
+          <div className="min-w-0">
+            <div className="line-clamp-2 break-words font-semibold text-semantic-text">{row.title}</div>
+            {summary && <div className="mt-0.5 line-clamp-1 text-xs text-semantic-text-muted">{summary}</div>}
+            {lead && (
+              <Link
+                to="/crm"
+                onClick={(e) => e.stopPropagation()}
+                className="mt-1.5 inline-flex max-w-full items-center gap-1 text-xs font-medium text-semantic-accent hover:underline"
+              >
+                <ExternalLink className="h-3 w-3 shrink-0" />
+                <span className="truncate">{lead.title}</span>
+              </Link>
+            )}
+          </div>
         );
       },
     },
     {
       key: 'created_at',
       header: 'Created',
-      sortable: true,
-      widthClass: 'min-w-[120px]',
+      track: 'minmax(0, 1fr)',
+      sortKey: 'created_at',
       render: (row) => (
-        <div className="inline-flex items-center gap-1.5 text-sm">
-          <Calendar className="w-3.5 h-3.5 text-semantic-text-muted" />
-          <span className="text-semantic-text">{formatDate(row.created_at) ?? '—'}</span>
+        <div className="min-w-0 text-sm">
+          <div className="inline-flex items-center gap-1.5 text-semantic-text">
+            <Calendar className="h-3.5 w-3.5 shrink-0 text-semantic-text-muted" />
+            <span>{formatDate(row.created_at) ?? '—'}</span>
+          </div>
+          {row.status === 'accepted' && row.accepted_at && (
+            <div className="mt-1 flex items-center gap-1 text-xs font-medium text-semantic-success">
+              <CheckCircle2 className="h-3 w-3 shrink-0" />
+              <span>Accepted {formatDate(row.accepted_at)}</span>
+            </div>
+          )}
         </div>
       ),
     },
     {
-      key: 'accepted_at',
-      header: 'Accepted',
-      sortable: false,
-      widthClass: 'min-w-[140px]',
-      render: (row) => {
-        if (row.status === 'accepted' && row.accepted_at) {
-          return (
-            <div className="flex flex-col gap-1">
-              <Badge variant="success">Accepted</Badge>
-              <span className="text-xs text-semantic-text-muted">{formatDate(row.accepted_at)}</span>
-            </div>
-          );
-        }
-        return <span className="text-semantic-text-muted text-xs">—</span>;
-      },
-    },
-    {
       key: 'total_cents',
       header: 'Total',
-      sortable: true,
+      track: 'minmax(0, 1fr)',
       align: 'right',
-      widthClass: 'min-w-[140px]',
+      sortKey: 'total_cents',
       render: (row) => (
-        <div className="flex flex-col items-end gap-1">
+        <div className="rgrid-end">
           <span className="font-bold tabular-nums text-semantic-text">{formatCurrency(row.total_cents, row.currency)}</span>
           <Badge variant={statusBadgeVariant(row.status)}>{row.status}</Badge>
         </div>
@@ -641,11 +916,11 @@ export function Quotes() {
     {
       key: 'actions',
       header: 'Actions',
-      sortable: false,
+      track: '204px',
+      role: 'actions',
       align: 'right',
-      widthClass: 'min-w-[260px]',
       render: (row) => (
-        <div className="flex flex-wrap items-center gap-1.5 justify-end" onClick={(e) => e.stopPropagation()}>
+        <div className="rgrid-actions" onClick={(e) => e.stopPropagation()}>
           {row.status === 'draft' && (
             <Button variant="ghost" size="sm" onClick={() => void editQuote(row.id)}>
               <Edit3 className="w-3.5 h-3.5" /> Edit
@@ -660,7 +935,7 @@ export function Quotes() {
             </Button>
           )}
           {row.status !== 'accepted' && (
-            <Button variant="ghost" size="sm" onClick={() => void remove(row.id)}>
+            <Button variant="ghost" size="sm" aria-label="Delete quote" onClick={() => void remove(row.id)}>
               <Trash2 className="w-3.5 h-3.5 text-semantic-danger" />
             </Button>
           )}
@@ -784,8 +1059,19 @@ export function Quotes() {
         eyebrow="Sales workspace"
         title="Quotes & Proposals"
         description="Build a quote from your pipeline, use AI to prepare a reviewable draft, then preview and share it when you're ready."
+        primaryAction={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" size="sm" onClick={scrollToEditor}>
+              <Plus className="h-4 w-4" /> New quote
+            </Button>
+            <Button variant="outline" size="sm" onClick={openRateCards}>
+              <CreditCard className="h-4 w-4" /> Rate cards
+            </Button>
+          </div>
+        }
         statChips={[
           { label: 'Saved quotes', value: quotes.length, tone: 'accent' },
+          { label: 'Rate cards', value: cards.length, tone: 'accent' },
           { label: 'AI drafts stay in your control', value: 'Human-reviewed only', tone: 'muted' },
         ]}
       />
@@ -813,7 +1099,7 @@ export function Quotes() {
       <div
         id="quote-editor-form"
         ref={editorRef}
-        className={cn('quote-rise scroll-mt-4 rounded-ui-2xl', editorFlash && 'quote-flash')}
+        className={cn('quote-rise quote-cq scroll-mt-4 rounded-ui-2xl', editorFlash && 'quote-flash')}
       >
         <Card className="relative overflow-hidden">
           <span
@@ -880,7 +1166,7 @@ export function Quotes() {
               </div>
             )}
 
-            <form onSubmit={(e) => void submit(e)} className="grid gap-4 md:grid-cols-2">
+            <form onSubmit={(e) => void submit(e)} className="quote-form-grid">
               <label className="text-xs font-semibold text-semantic-text-muted">
                 Proposal title
                 <input
@@ -891,7 +1177,7 @@ export function Quotes() {
                   onChange={(e) => setTitle(e.target.value)}
                 />
               </label>
-              <label className="text-xs font-semibold text-semantic-text-muted md:col-span-2">
+              <label className="text-xs font-semibold text-semantic-text-muted quote-span-2">
                 Proposal description
                 <textarea
                   className={`${field} mt-1.5`}
@@ -913,7 +1199,16 @@ export function Quotes() {
                 </select>
               </label>
               <label className="text-xs font-semibold text-semantic-text-muted">
-                Rate card
+                <span className="flex items-center justify-between gap-2">
+                  <span>Rate card</span>
+                  <button
+                    type="button"
+                    onClick={openRateCards}
+                    className="font-semibold text-semantic-accent hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
+                  >
+                    Manage rate cards
+                  </button>
+                </span>
                 <select
                   className={`${field} mt-1.5`}
                   value={cardId}
@@ -936,12 +1231,12 @@ export function Quotes() {
                   <option>GBP</option>
                 </select>
               </label>
-              <div className="space-y-3 md:col-span-2">
+              <div className="space-y-3 quote-span-2">
                 <p className="text-xs font-bold uppercase tracking-wider text-semantic-text-muted">Line items</p>
                 {lineItems.map((line, index) => (
                   <div
                     key={index}
-                    className="quote-pop grid items-end gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/40 p-3 transition-all duration-200 hover:border-semantic-accent/40 hover:bg-semantic-surface-muted/70 focus-within:border-semantic-accent/50 focus-within:shadow-ui-sm sm:grid-cols-[2fr_120px_1fr_auto]"
+                    className="quote-pop grid items-end gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/40 p-3 transition-all duration-200 hover:border-semantic-accent/40 hover:bg-semantic-surface-muted/70 focus-within:border-semantic-accent/50 focus-within:shadow-ui-sm quote-line-grid"
                   >
                     <label className="text-xs font-semibold text-semantic-text-muted">
                       Description
@@ -1050,7 +1345,7 @@ export function Quotes() {
                   onChange={(e) => setTax(e.target.value)}
                 />
               </label>
-              <label className="text-xs font-semibold text-semantic-text-muted md:col-span-2">
+              <label className="text-xs font-semibold text-semantic-text-muted quote-span-2">
                 Terms and notes
                 <textarea
                   className={`${field} mt-1.5`}
@@ -1060,7 +1355,7 @@ export function Quotes() {
                   onChange={(e) => setTerms(e.target.value)}
                 />
               </label>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-semantic-border pt-4 md:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-semantic-border pt-4 quote-span-2">
                 <span className="text-xs text-semantic-text-muted">
                   Prices are saved in cents. AI output always requires human review.
                 </span>
@@ -1104,42 +1399,90 @@ export function Quotes() {
         </Card>
       </div>
 
-      {/* Saved quotes */}
-      <div ref={listRef} className="quote-rise scroll-mt-4 space-y-3" style={{ animationDelay: '80ms' }}>
-        <div className="flex items-end justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-semantic-text">Saved quotes</h2>
-            <p className="text-xs text-semantic-text-muted mt-0.5">
-              {quotes.length} proposals in this workspace
+      {/* Saved quotes + Rate cards. Tabs keep rate cards one click away instead of buried at the bottom. */}
+      <div ref={listRef} className="quote-rise scroll-mt-4 space-y-4" style={{ animationDelay: '80ms' }}>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold text-semantic-text">
+              {view === 'quotes' ? 'Saved quotes' : 'Rate cards'}
+            </h2>
+            <p className="mt-0.5 text-xs text-semantic-text-muted">
+              {view === 'quotes'
+                ? `${quotes.length} proposals in this workspace`
+                : `${cards.length} rate cards available when building quotes`}
             </p>
+          </div>
+          <div
+            role="tablist"
+            aria-label="Quotes sections"
+            className="inline-flex rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/60 p-1"
+          >
+            {([
+              ['quotes', 'Saved quotes', quotes.length],
+              ['rates', 'Rate cards', cards.length],
+            ] as const).map(([id, label, count]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={view === id}
+                onClick={() => setView(id)}
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-ui-lg px-3.5 py-1.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border',
+                  view === id
+                    ? 'bg-semantic-surface text-semantic-text shadow-ui-sm'
+                    : 'text-semantic-text-muted hover:text-semantic-text'
+                )}
+              >
+                {label}
+                <span
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-[11px] tabular-nums',
+                    view === id
+                      ? 'bg-semantic-accent-soft text-semantic-accent'
+                      : 'bg-semantic-surface text-semantic-text-muted'
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
 
-        <DataTable<Quote>
-          columns={columns}
-          rows={filteredQuotes}
-          rowKey={(r) => r.id}
-          searchable
-          searchPlaceholder="Search by title or client…"
-          searchValue={search}
-          onSearchChange={setSearch}
-          filters={filters}
-          filterValues={filterValues}
-          onFilterChange={(k, v) => setFilterValues((prev) => ({ ...prev, [k]: v }))}
-          sortable
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSortChange={handleSortChange}
-          emptyState={
-            <EmptyState
-              title="No quotes yet"
-              description="Create your first proposal above."
-              action={
-                <Button variant="primary" onClick={scrollToForm}>Create quote</Button>
-              }
-            />
-          }
-        />
+        {view === 'quotes' ? (
+          <ResponsiveGrid<Quote>
+            columns={columns}
+            rows={filteredQuotes}
+            rowKey={(r) => r.id}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={handleSortChange}
+            toolbar={
+              <GridToolbar
+                search={search}
+                onSearch={setSearch}
+                searchPlaceholder="Search by title or client…"
+                filters={toolbarFilters}
+                sortValue={sortSelectValue}
+                sortOptions={sortOptions}
+                onSortChange={handleSortSelect}
+              />
+            }
+            footer={`Showing ${filteredQuotes.length} of ${quotes.length} quotes`}
+            emptyState={
+              <EmptyState
+                title="No quotes yet"
+                description="Create your first proposal above."
+                action={
+                  <Button variant="primary" onClick={scrollToForm}>Create quote</Button>
+                }
+              />
+            }
+          />
+        ) : (
+          <RateCardForm cards={cards} onCreated={async () => { await load(); }} />
+        )}
       </div>
 
       {/* PDF preview: auto-scrolled into view when opened */}
@@ -1169,23 +1512,6 @@ export function Quotes() {
           </Card>
         </div>
       )}
-
-      <details className="group quote-rise" style={{ animationDelay: '140ms' }}>
-        <summary className="flex cursor-pointer list-none items-center justify-between rounded-ui-2xl border border-semantic-border bg-semantic-surface px-5 py-4 text-sm font-semibold text-semantic-text transition-all duration-200 hover:border-semantic-accent/40 hover:shadow-ui-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border [&::-webkit-details-marker]:hidden">
-          <div className="flex items-center gap-2">
-            <span>Manage rate cards</span>
-            <span className="text-xs font-normal text-semantic-text-muted">
-              {cards.length} available
-            </span>
-          </div>
-          <span className="text-xs text-semantic-text-muted group-open:rotate-180 transition-transform duration-200">
-            ▾
-          </span>
-        </summary>
-        <div className="quote-pop mt-2">
-          <RateCardForm cards={cards} onCreated={async () => { await load(); }} />
-        </div>
-      </details>
     </div>
   );
 }
@@ -1286,16 +1612,17 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
       toast.error(err instanceof Error ? err.message : 'Unable to delete rate card');
     }
   };
-  const rcColumns: DataTableColumn<RateCard>[] = [
+  const rcColumns: GridColumn<RateCard>[] = [
     {
       key: 'name',
       header: 'Name',
-      sortable: false,
+      track: 'minmax(0, 2.4fr)',
+      role: 'primary',
       render: (r) => (
-        <div className="flex flex-col gap-0.5">
-          <span className="font-semibold text-sm text-semantic-text">{r.name}</span>
+        <div className="min-w-0">
+          <div className="break-words text-sm font-semibold text-semantic-text">{r.name}</div>
           {r.description && (
-            <span className="text-xs text-semantic-text-muted line-clamp-1">{r.description}</span>
+            <div className="mt-0.5 line-clamp-2 text-xs text-semantic-text-muted">{r.description}</div>
           )}
         </div>
       ),
@@ -1303,13 +1630,13 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
     {
       key: 'currency',
       header: 'Currency',
-      sortable: false,
+      track: 'minmax(0, 0.8fr)',
       render: (r) => <span className="text-sm text-semantic-text">{r.currency}</span>,
     },
     {
       key: 'default_rate_cents',
       header: 'Default hourly rate',
-      sortable: false,
+      track: 'minmax(0, 1.3fr)',
       align: 'right',
       render: (r) => (
         <span className="text-sm font-semibold tabular-nums text-semantic-text">
@@ -1320,10 +1647,11 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
     {
       key: 'actions',
       header: 'Actions',
-      sortable: false,
+      track: '190px',
+      role: 'actions',
       align: 'right',
       render: (r) => (
-        <div className="flex items-center gap-1 justify-end">
+        <div className="rgrid-actions">
           <Button
             variant="ghost"
             size="sm"
@@ -1345,10 +1673,10 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
     },
   ];
   return (
-    <Card>
+    <Card className="quote-cq">
       <CardContent className="space-y-5">
         <form
-          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_auto]"
+          className="quote-rate-grid"
           onSubmit={async (e) => {
             e.preventDefault();
             try {
@@ -1408,7 +1736,7 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
               onChange={(e) => setRate(e.target.value)}
             />
           </label>
-          <label className="text-xs font-semibold text-semantic-text-muted sm:col-span-2 lg:col-span-4">
+          <label className="text-xs font-semibold text-semantic-text-muted quote-span-all">
             Description
             <textarea
               className={`${field} mt-1.5`}
@@ -1418,7 +1746,7 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
               onChange={(e) => setCardDescription(e.target.value)}
             />
           </label>
-          <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-4 lg:justify-end">
+          <div className="quote-span-all flex flex-wrap items-center justify-end gap-2">
             <Button type="submit" variant="primary">
               {editingId ? 'Save changes' : 'Add rate card'}
             </Button>
@@ -1429,12 +1757,11 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
             )}
           </div>
         </form>
-        <DataTable<RateCard>
+        <ResponsiveGrid<RateCard>
           columns={rcColumns}
           rows={cards}
           rowKey={(r) => r.id}
-          sortable={false}
-          searchable={false}
+          footer={`${cards.length} rate card${cards.length === 1 ? '' : 's'}`}
           emptyState={
             <EmptyState
               title="No rate cards yet"

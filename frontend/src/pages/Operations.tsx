@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentType, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/toast';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Sparkles, CheckCircle2, Inbox, Loader2, ChevronDown, Target, Activity, Receipt } from 'lucide-react';
+import { Search, Sparkles, CheckCircle2, Inbox, Loader2, ChevronDown, Target, Activity, Receipt, ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Badge } from '../components/ui/Badge';
@@ -36,6 +36,144 @@ type KnowledgeResult = { content: string; document: { id: string; title: string 
 
 const fieldControl = 'rounded-ui-xl px-3.5 py-2 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border w-full';
 
+function ProjectDropdown({ projects, value, onChange }: { projects: Project[]; value: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const listboxId = useId();
+  const selected = projects.find((project) => project.id === value);
+  const filteredProjects = projects.filter((project) => project.name.toLowerCase().includes(search.trim().toLowerCase()));
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setSearch('');
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, []);
+
+  useEffect(() => {
+    setActiveIndex((index) => Math.min(index, Math.max(filteredProjects.length - 1, 0)));
+  }, [filteredProjects.length]);
+
+  const choose = (project: Project) => {
+    onChange(project.id);
+    setOpen(false);
+    setSearch('');
+  };
+  const moveActive = (direction: number) => {
+    if (!filteredProjects.length) return;
+    setActiveIndex((index) => (index + direction + filteredProjects.length) % filteredProjects.length);
+  };
+
+  return (
+    <div ref={rootRef} className="relative mt-1.5">
+      <button
+        type="button"
+        role="combobox"
+        aria-label="Project"
+        aria-haspopup="listbox"
+        aria-controls={listboxId}
+        aria-expanded={open}
+        aria-required="true"
+        aria-activedescendant={open && filteredProjects.length ? `${listboxId}-option-${activeIndex}` : undefined}
+        disabled={!projects.length}
+        onClick={() => {
+          setOpen((previous) => !previous);
+          setSearch('');
+          setActiveIndex(Math.max(0, projects.findIndex((project) => project.id === value)));
+          window.setTimeout(() => searchRef.current?.focus(), 0);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (!open) setOpen(true);
+            else moveActive(event.key === 'ArrowDown' ? 1 : -1);
+            window.setTimeout(() => searchRef.current?.focus(), 0);
+          } else if (event.key === 'Escape' && open) {
+            event.preventDefault();
+            setOpen(false);
+            setSearch('');
+          }
+        }}
+        className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border bg-semantic-surface px-3.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-semantic-accent/40 disabled:cursor-not-allowed disabled:opacity-50 ${open ? 'border-semantic-accent ring-2 ring-semantic-accent/10' : 'border-semantic-border hover:border-semantic-accent/50'}`}
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-semantic-accent/10 text-semantic-accent" aria-hidden="true">
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M8 8h8M8 12h5M8 16h3" /></svg>
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate font-medium text-semantic-text">{selected?.name ?? (projects.length ? 'Choose a project' : 'No projects available')}</span>
+            <span className="block text-xs font-normal text-semantic-text-muted">{selected ? 'Project selected' : 'Click to select a project'}</span>
+          </span>
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-semantic-text-muted transition-transform duration-200 ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+
+      {open && (
+        <div className="absolute inset-x-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-semantic-border bg-semantic-surface shadow-xl">
+          <div className="border-b border-semantic-border p-3">
+            <input
+              ref={searchRef}
+              autoFocus
+              type="search"
+              value={search}
+              onChange={(event) => { setSearch(event.target.value); setActiveIndex(0); }}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  moveActive(event.key === 'ArrowDown' ? 1 : -1);
+                } else if (event.key === 'Enter' && filteredProjects[activeIndex]) {
+                  event.preventDefault();
+                  choose(filteredProjects[activeIndex]);
+                } else if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setOpen(false);
+                  setSearch('');
+                }
+              }}
+              placeholder="Search projects..."
+              aria-label="Search projects"
+              aria-controls={listboxId}
+              aria-activedescendant={filteredProjects.length ? `${listboxId}-option-${activeIndex}` : undefined}
+              className="min-h-10 w-full rounded-lg border border-semantic-border bg-semantic-surface px-3 text-sm text-semantic-text outline-none transition focus:border-semantic-accent focus:ring-2 focus:ring-semantic-accent/10"
+            />
+          </div>
+          <div id={listboxId} role="listbox" aria-label="Available projects" className="max-h-60 overflow-y-auto p-1.5">
+            {filteredProjects.map((project, index) => {
+              const isSelected = project.id === value;
+              return (
+                <button
+                  key={project.id}
+                  id={`${listboxId}-option-${index}`}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => choose(project)}
+                  className={`flex min-h-10 w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${index === activeIndex ? 'bg-semantic-accent/5' : ''} ${isSelected ? 'text-semantic-accent' : 'text-semantic-text hover:bg-semantic-accent/5'}`}
+                >
+                  <span className="truncate">{project.name}</span>
+                  {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />}
+                </button>
+              );
+            })}
+            {filteredProjects.length === 0 && <p className="px-3 py-6 text-center text-sm text-semantic-text-muted">No matching projects found.</p>}
+          </div>
+          <div className="border-t border-semantic-border px-3 py-2 text-xs text-semantic-text-muted">
+            {filteredProjects.length} {filteredProjects.length === 1 ? 'project' : 'projects'} available
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Shared UI helpers (animation + scrolling)                           */
 /* ------------------------------------------------------------------ */
@@ -58,7 +196,7 @@ function useEditorScroll() {
     setFlash(true);
     window.setTimeout(() => setFlash(false), 1200);
   }, []);
-  const className = cn('ops-rise scroll-mt-4 rounded-ui-2xl', flash && 'ops-flash');
+  const className = cn('ops-rise ops-cq scroll-mt-4 rounded-ui-2xl', flash && 'ops-flash');
   return { ref, focusEditor, className };
 }
 
@@ -97,6 +235,81 @@ const opsStyles = `
 @media (prefers-reduced-motion: reduce) {
   .ops-rise, .ops-pop, .ops-flash { animation: none; }
 }
+
+/* ---- Container-responsive forms: columns follow the content width, not the browser width ---- */
+.ops-cq { container-type: inline-size; }
+.ops-form { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 520px) {
+  .ops-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (min-width: 860px) {
+  .ops-form--proj { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .ops-form--ts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .ops-span3-wide { grid-column: span 3; }
+}
+@container (max-width: 859.98px) {
+  .ops-fullbelow, .ops-span3-wide { grid-column: 1 / -1; }
+}
+/* ---- Responsive grid list (reacts to the CONTENT width, not the browser width) ---- */
+.rgrid-cq { container-type: inline-size; }
+.rgrid-head { display: none; }
+.rgrid-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  padding: 1rem;
+  align-items: start;
+}
+.rgrid-cell { min-width: 0; }
+.rgrid-cell[data-role='primary'] { grid-column: 1 / -1; order: -1; }
+.rgrid-cell[data-role='actions'] { grid-column: 1 / -1; }
+.rgrid-cell[data-label]::before {
+  content: attr(data-label);
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+.rgrid-cell:empty { display: none; }
+.rgrid-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; }
+.rgrid-end { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+@container (min-width: 800px) {
+  .rgrid-cq:not([data-wide='lg']) .rgrid-head, .rgrid-cq:not([data-wide='lg']) .rgrid-row {
+    display: grid;
+    grid-template-columns: var(--rgrid-cols);
+    column-gap: 1rem;
+    align-items: center;
+  }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-head { padding: 0.7rem 1.25rem; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-row { padding: 0.85rem 1.25rem; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell[data-role='primary'] { grid-column: auto; order: 0; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell[data-role='actions'] { grid-column: auto; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell[data-label]::before { display: none; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell:empty { display: block; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-cell[data-align='right'], .rgrid-cq:not([data-wide='lg']) .rgrid-head > [data-align='right'] { text-align: right; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-actions { justify-content: flex-end; }
+  .rgrid-cq:not([data-wide='lg']) .rgrid-end { align-items: flex-end; }
+}
+@container (min-width: 900px) {
+  .rgrid-cq[data-wide='lg'] .rgrid-head, .rgrid-cq[data-wide='lg'] .rgrid-row {
+    display: grid;
+    grid-template-columns: var(--rgrid-cols);
+    column-gap: 1rem;
+    align-items: center;
+  }
+  .rgrid-cq[data-wide='lg'] .rgrid-head { padding: 0.7rem 1.25rem; }
+  .rgrid-cq[data-wide='lg'] .rgrid-row { padding: 0.85rem 1.25rem; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell[data-role='primary'] { grid-column: auto; order: 0; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell[data-role='actions'] { grid-column: auto; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell[data-label]::before { display: none; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell:empty { display: block; }
+  .rgrid-cq[data-wide='lg'] .rgrid-cell[data-align='right'], .rgrid-cq[data-wide='lg'] .rgrid-head > [data-align='right'] { text-align: right; }
+  .rgrid-cq[data-wide='lg'] .rgrid-actions { justify-content: flex-end; }
+  .rgrid-cq[data-wide='lg'] .rgrid-end { align-items: flex-end; }
+}
 `;
 
 const OpsStyles = () => <style>{opsStyles}</style>;
@@ -108,6 +321,208 @@ const FormAccent = () => (
     className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500 opacity-80"
   />
 );
+
+/* ------------------------------------------------------------------ */
+/* Responsive list: table on wide content, stacked cards on narrow.    */
+/* Layout follows the content width (container query), so it stays     */
+/* tidy at 90% / 100% / 110% browser zoom with the sidebar open and    */
+/* never needs a horizontal scrollbar.                                 */
+/* ------------------------------------------------------------------ */
+
+type GridColumn<T> = {
+  key: string;
+  header: string;
+  /** CSS grid track for the wide layout, e.g. 'minmax(0, 2fr)' or '200px' */
+  track: string;
+  /** 'primary' = full-width title row on narrow layouts, 'actions' = full-width button row */
+  role?: 'primary' | 'actions';
+  align?: 'right';
+  sortKey?: string;
+  render: (row: T) => ReactNode;
+};
+
+type ToolbarFilter = {
+  key: string;
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+};
+
+function GridToolbar({
+  search,
+  onSearch,
+  searchPlaceholder = 'Search…',
+  filters = [],
+  sortValue,
+  sortOptions,
+  onSortChange,
+}: {
+  search?: string;
+  onSearch?: (value: string) => void;
+  searchPlaceholder?: string;
+  filters?: ToolbarFilter[];
+  sortValue?: string;
+  sortOptions?: { value: string; label: string }[];
+  onSortChange?: (value: string) => void;
+}) {
+  const labelClass = 'flex min-w-[140px] flex-[1_1_150px] flex-col text-[10px] font-bold uppercase tracking-wider text-semantic-text-muted sm:max-w-[220px]';
+  return (
+    <div className="flex flex-wrap items-end gap-3 border-b border-semantic-border p-3 sm:p-4">
+      {onSearch && (
+        <div className="relative min-w-[200px] flex-[2_1_220px]">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-semantic-text-muted" />
+          <input
+            type="text"
+            aria-label={searchPlaceholder}
+            placeholder={searchPlaceholder}
+            value={search ?? ''}
+            onChange={(e) => onSearch(e.target.value)}
+            className={cn(fieldControl, 'pl-9')}
+          />
+        </div>
+      )}
+      {filters.map((f) => (
+        <label key={f.key} className={labelClass}>
+          {f.label}
+          <select className={`${fieldControl} mt-1`} value={f.value} onChange={(e) => f.onChange(e.target.value)}>
+            {f.options.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+      ))}
+      {sortOptions && onSortChange && (
+        <label className={labelClass}>
+          Sort by
+          <select className={`${fieldControl} mt-1`} value={sortValue ?? ''} onChange={(e) => onSortChange(e.target.value)}>
+            {sortOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function ResponsiveGrid<T>({
+  columns,
+  rows,
+  rowKey,
+  emptyState,
+  loading = false,
+  sortKey = null,
+  sortDir = null,
+  onSort,
+  toolbar,
+  footer,
+  wideAt = 'md',
+}: {
+  columns: GridColumn<T>[];
+  rows: T[];
+  rowKey: (row: T) => string;
+  emptyState: ReactNode;
+  loading?: boolean;
+  sortKey?: string | null;
+  sortDir?: 'asc' | 'desc' | null;
+  onSort?: (key: string) => void;
+  toolbar?: ReactNode;
+  footer?: ReactNode;
+  /** Content width where the table layout kicks in: 'md' = 800px, 'lg' = 900px (use for dense tables). */
+  wideAt?: 'md' | 'lg';
+}) {
+  const tableStyle = { '--rgrid-cols': columns.map((c) => c.track).join(' ') } as CSSProperties;
+  return (
+    <div data-wide={wideAt} className="rgrid-cq overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface shadow-ui-sm">
+      {toolbar}
+      <div role="table" style={tableStyle}>
+        <div
+          role="row"
+          className="rgrid-head border-b border-semantic-border bg-semantic-surface-muted/50 text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted"
+        >
+          {columns.map((col) => {
+            const sk = col.sortKey;
+            const active = !!sk && sortKey === sk;
+            return (
+              <div
+                key={col.key}
+                role="columnheader"
+                data-align={col.align}
+                aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+              >
+                {sk && onSort ? (
+                  <button
+                    type="button"
+                    onClick={() => onSort(sk)}
+                    className={cn(
+                      'inline-flex items-center gap-1 font-bold uppercase tracking-wider transition-colors hover:text-semantic-text focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border',
+                      active && 'text-semantic-accent'
+                    )}
+                  >
+                    {col.header}
+                    {active ? (
+                      sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                    ) : (
+                      <ArrowUpDown className="h-3 w-3 opacity-50" />
+                    )}
+                  </button>
+                ) : (
+                  col.header
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} aria-hidden="true" className="space-y-2 border-b border-semantic-border/60 p-4 last:border-0">
+              <div className="h-4 w-2/3 animate-pulse rounded bg-semantic-surface-muted" />
+              <div className="h-3 w-1/3 animate-pulse rounded bg-semantic-surface-muted" />
+            </div>
+          ))
+        ) : rows.length === 0 ? (
+          <div className="p-6">{emptyState}</div>
+        ) : (
+          rows.map((row) => (
+            <div
+              key={rowKey(row)}
+              role="row"
+              className="rgrid-row border-b border-semantic-border/60 transition-colors last:border-0 hover:bg-semantic-surface-muted/50"
+            >
+              {columns.map((col) => (
+                <div
+                  key={col.key}
+                  role="cell"
+                  className="rgrid-cell"
+                  data-role={col.role}
+                  data-align={col.align}
+                  data-label={col.role ? undefined : col.header}
+                >
+                  {col.render(row)}
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+      {footer && (
+        <div className="border-t border-semantic-border bg-semantic-surface-muted/30 px-4 py-2.5 text-xs text-semantic-text-muted sm:px-5">
+          {footer}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const formatEntryDate = (value: string) => {
+  const d = new Date(`${value}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? value
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
 
 const BudgetBar = ({ usedMinutes, budgetMinutes }: { usedMinutes: number; budgetMinutes: number }) => {
   const ready = useAfterPaint();
@@ -331,10 +746,22 @@ export function ProjectsPage() {
     return list;
   }, [rows, search, filterStatus, sortKey, sortDir, usedMinutesByProject]);
 
-  const toggleSort = (key: string) => {
-    if (sortKey === key) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-    else { setSortKey(key); setSortDir('desc'); }
+  // Sort dropdown values look like "name:asc" (works at every screen size).
+  const sortSelectValue = `${sortKey ?? 'created_at'}:${sortDir}`;
+  const handleSortSelect = (value: string) => {
+    const [key, dir] = value.split(':');
+    setSortKey(key);
+    setSortDir(dir === 'asc' ? 'asc' : 'desc');
   };
+  const projectSortOptions = [
+    { value: 'created_at:desc', label: 'Newest first' },
+    { value: 'created_at:asc', label: 'Oldest first' },
+    { value: 'name:asc', label: 'Name A–Z' },
+    { value: 'name:desc', label: 'Name Z–A' },
+    { value: 'budget_used:desc', label: 'Most budget used' },
+    { value: 'budget_used:asc', label: 'Least budget used' },
+  ];
+  const resetProjectForm = () => { setEditing(null); setName(''); setBudgetHours(''); setBudget(''); };
 
   return (
     <div className="page-shell space-y-6">
@@ -343,7 +770,10 @@ export function ProjectsPage() {
         eyebrow="Delivery"
         title="Projects & Tasks"
         description="Plan work, assign tasks, and keep delivery budgets visible."
-        statChips={[{ label: 'Active projects', value: active_count, tone: 'accent' }]}
+        statChips={[
+          { label: 'Active projects', value: active_count, tone: 'accent' },
+          { label: 'Total projects', value: rows.length, tone: 'muted' },
+        ]}
       />
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
@@ -358,8 +788,8 @@ export function ProjectsPage() {
             {editing && <Badge variant="warning">Editing</Badge>}
           </CardHeader>
           <CardContent>
-            <form onSubmit={(e) => void saveProject(e)} className="grid gap-4 sm:grid-cols-[2fr_1fr_1fr_auto]">
-              <label className="text-xs font-semibold text-semantic-text-muted">
+            <form onSubmit={(e) => void saveProject(e)} className="ops-form ops-form--proj">
+              <label className="ops-fullbelow text-xs font-semibold text-semantic-text-muted">
                 Project name
                 <input className={`${fieldControl} mt-1.5`} required placeholder="e.g. Client portal rollout" value={name} onChange={(e) => setName(e.target.value)} />
               </label>
@@ -371,10 +801,10 @@ export function ProjectsPage() {
                 Amount budget (USD)
                 <input className={`${fieldControl} mt-1.5`} type="number" min="0" step="0.01" placeholder="0.00" value={budget} onChange={(e) => setBudget(e.target.value)} />
               </label>
-              <div className="flex items-end gap-2">
+              <div className="ops-fullbelow flex flex-wrap items-end gap-2 self-end">
                 <Button type="submit" size="md">{editing ? 'Save changes' : 'Create project'}</Button>
                 {editing && (
-                  <Button type="button" variant="secondary" onClick={() => { setEditing(null); setName(''); setBudgetHours(''); setBudget(''); }}>
+                  <Button type="button" variant="secondary" onClick={resetProjectForm}>
                     Cancel
                   </Button>
                 )}
@@ -385,43 +815,35 @@ export function ProjectsPage() {
       </div>
 
       <div className="ops-rise" style={{ animationDelay: '80ms' }}>
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader>
-            <div>
+            <div className="min-w-0">
               <h2 className="font-semibold text-semantic-text">Projects list</h2>
               <p className="text-xs text-semantic-text-muted mt-0.5">Click a project name to open its tasks.</p>
             </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
-                <input
-                  type="text"
-                  placeholder="Search projects..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="rounded-ui-xl px-3.5 py-2 pl-9 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border min-w-[200px]"
-                />
-              </div>
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[130px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-              >
-                <option value="all">All statuses</option>
-                <option value="active">Active</option>
-                <option value="archived">Archived</option>
-              </select>
-              <select
-                value={sortKey ?? ''}
-                onChange={(e) => toggleSort(e.target.value || 'created_at')}
-                className="rounded-ui-lg border border-semantic-border bg-semantic-surface text-semantic-text text-sm px-3 py-1.5 min-w-[160px] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border"
-              >
-                <option value="created_at">Created {sortDir === 'desc' ? '↓' : '↑'}</option>
-                <option value="name">Name {sortDir === 'desc' ? '↓' : '↑'}</option>
-                <option value="budget_used">Budget used {sortDir === 'desc' ? '↓' : '↑'}</option>
-              </select>
-            </div>
+            <Badge variant="muted">{filteredRows.length} of {rows.length}</Badge>
           </CardHeader>
+          <GridToolbar
+            search={search}
+            onSearch={setSearch}
+            searchPlaceholder="Search projects..."
+            filters={[
+              {
+                key: 'status',
+                label: 'Status',
+                value: filterStatus,
+                onChange: setFilterStatus,
+                options: [
+                  { value: 'all', label: 'All statuses' },
+                  { value: 'active', label: 'Active' },
+                  { value: 'archived', label: 'Archived' },
+                ],
+              },
+            ]}
+            sortValue={sortSelectValue}
+            sortOptions={projectSortOptions}
+            onSortChange={handleSortSelect}
+          />
           <CardContent className="space-y-3">
             {loading ? (
               <div className="space-y-3">
@@ -439,33 +861,35 @@ export function ProjectsPage() {
                 <Card
                   key={project.id}
                   className={cn(
-                    'ops-pop transition-all duration-200 hover:shadow-ui-lg',
+                    'ops-pop overflow-hidden transition-all duration-200 hover:shadow-ui-lg',
                     expanded === project.id && 'ring-2 ring-semantic-accent/20'
                   )}
                   style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
                 >
-                  <CardHeader>
+                  {/* Wraps instead of overflowing: the buttons drop below the details when space is tight. */}
+                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 px-4 py-4 sm:px-5">
                     <button
-                      className="group min-w-0 flex-1 text-left flex flex-col items-start gap-1 focus-visible:outline-none"
+                      type="button"
+                      className="group flex min-w-0 flex-[1_1_300px] flex-col items-start gap-1 text-left focus-visible:outline-none"
                       onClick={() => void toggle(project)}
                       aria-expanded={expanded === project.id}
                     >
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <ChevronDown
                           className={cn(
-                            'h-4 w-4 text-semantic-text-muted transition-transform duration-200 group-hover:text-semantic-accent',
+                            'h-4 w-4 shrink-0 text-semantic-text-muted transition-transform duration-200 group-hover:text-semantic-accent',
                             expanded === project.id && 'rotate-180 text-semantic-accent'
                           )}
                         />
-                        <span className="font-bold text-semantic-text group-hover:text-semantic-accent transition-colors">{project.name}</span>
+                        <span className="min-w-0 break-words font-bold text-semantic-text transition-colors group-hover:text-semantic-accent">{project.name}</span>
                         <Badge variant={project.status === 'archived' ? 'muted' : 'success'}>
                           {project.status}
                         </Badge>
                       </div>
                       {project.description && (
-                        <p className="text-sm text-semantic-text-muted truncate max-w-xl">{project.description}</p>
+                        <p className="line-clamp-2 max-w-full text-sm text-semantic-text-muted">{project.description}</p>
                       )}
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-semantic-text-muted mt-0.5">
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-semantic-text-muted">
                         {(project.start_date || project.end_date) && (
                           <span>
                             {project.start_date || '—'} → {project.end_date || '—'}
@@ -482,7 +906,7 @@ export function ProjectsPage() {
                         />
                       )}
                     </button>
-                    <div className="flex gap-2">
+                    <div className="flex shrink-0 flex-wrap gap-2">
                       <Button
                         variant="secondary"
                         size="sm"
@@ -502,7 +926,7 @@ export function ProjectsPage() {
                         </Button>
                       )}
                     </div>
-                  </CardHeader>
+                  </div>
                   {expanded === project.id && (
                     <CardContent className="ops-pop border-t border-semantic-border bg-semantic-surface-muted/40">
                       <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted mb-3">Tasks</h3>
@@ -515,7 +939,7 @@ export function ProjectsPage() {
                           (tasks[project.id] || []).map((task) => (
                             <div key={task.id} className="ops-pop flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-3 py-2.5 text-sm transition-colors hover:border-semantic-accent/40">
                               <button
-                                className="min-w-0 flex-1 truncate text-left font-medium text-semantic-text"
+                                className="min-w-0 flex-[1_1_200px] break-words text-left font-medium text-semantic-text"
                                 onClick={() => {
                                   const title = window.prompt('Update task title', task.title);
                                   if (title?.trim() && title !== task.title) void updateTask(task, { title: title.trim() });
@@ -712,7 +1136,7 @@ export function TimesheetsPage() {
         return sortDir === 'desc' ? -cmp : cmp;
       });
     }
-    return list;
+    return list;0
   }, [entries, search, filterValues, sortKey, sortDir, user?.id]);
 
   const toggleSort = (key: string) => {
@@ -724,11 +1148,17 @@ export function TimesheetsPage() {
     setFilterValues((old) => ({ ...old, [key]: value }));
   };
 
-  const filters: DataTableFilterDef[] = [
+  const filterValue = (key: string, fallback: string) => {
+    const v = filterValues[key];
+    return typeof v === 'string' ? v : fallback;
+  };
+
+  const toolbarFilters: ToolbarFilter[] = [
     {
       key: 'approval_status',
       label: 'Approval',
-      type: 'dropdown',
+      value: filterValue('approval_status', 'all'),
+      onChange: (v) => onFilterChange('approval_status', v),
       options: [
         { value: 'all', label: 'All' },
         { value: 'pending', label: 'Pending' },
@@ -739,7 +1169,8 @@ export function TimesheetsPage() {
     {
       key: 'project_id',
       label: 'Project',
-      type: 'dropdown',
+      value: filterValue('project_id', 'all'),
+      onChange: (v) => onFilterChange('project_id', v),
       options: [
         { value: 'all', label: 'All projects' },
         ...projects.map((p) => ({ value: p.id, label: p.name })),
@@ -747,66 +1178,90 @@ export function TimesheetsPage() {
     },
     {
       key: 'is_billable',
-      label: 'Billable',
-      type: 'chips',
+      label: 'Billing',
+      value: filterValue('is_billable', ''),
+      onChange: (v) => onFilterChange('is_billable', v),
       options: [
-        { value: 'yes', label: 'Billable' },
-        { value: 'no', label: 'Non-billable' },
+        { value: '', label: 'Billable & non-billable' },
+        { value: 'yes', label: 'Billable only' },
+        { value: 'no', label: 'Non-billable only' },
       ],
     },
   ];
 
-  const columns: DataTableColumn<Entry>[] = [
+  // Sort dropdown (works on narrow layouts where there are no column headers).
+  const sortOptions = [
+    { value: 'entry_date:desc', label: 'Newest first' },
+    { value: 'entry_date:asc', label: 'Oldest first' },
+    { value: 'minutes:desc', label: 'Most hours' },
+    { value: 'minutes:asc', label: 'Fewest hours' },
+  ];
+  const sortSelectValue = `${sortKey ?? 'entry_date'}:${sortDir}`;
+  const handleSortSelect = (value: string) => {
+    const [key, dir] = value.split(':');
+    setSortKey(key);
+    setSortDir(dir === 'asc' ? 'asc' : 'desc');
+  };
+
+  const pendingCount = entries.filter((entry) => entry.approval_status === 'pending').length;
+  const loggedHours = entries.reduce((sum, entry) => sum + entry.minutes, 0) / 60;
+  const shownHours = filteredEntries.reduce((sum, entry) => sum + entry.minutes, 0) / 60;
+
+  const columns: GridColumn<Entry>[] = [
     {
       key: 'entry_date',
       header: 'Date',
-      sortable: true,
-      widthClass: 'w-[130px]',
-      accessor: (r) => r.entry_date,
+      track: 'minmax(0, 0.9fr)',
+      sortKey: 'entry_date',
+      render: (r) => <span className="text-sm font-medium tabular-nums text-semantic-text">{formatEntryDate(r.entry_date)}</span>,
     },
     {
-      key: 'project_id',
-      header: 'Project',
-      render: (r) => <span className="font-medium text-semantic-text">{projectName(r.project_id)}</span>,
+      key: 'description',
+      header: 'Work',
+      track: 'minmax(0, 2.6fr)',
+      role: 'primary',
+      render: (r) => (
+        <div className="min-w-0">
+          <div className="break-words font-semibold text-semantic-text">{r.description}</div>
+          <div className="mt-0.5 truncate text-xs text-semantic-text-muted">{projectName(r.project_id)}</div>
+        </div>
+      ),
     },
     {
       key: 'employee',
       header: 'Employee',
+      track: 'minmax(0, 1.1fr)',
       render: (r) => {
         const name = employeeName(r);
         if (name === 'You') return <Badge variant="success" size="sm">You</Badge>;
         if (name === '—') return <span className="text-semantic-text-muted">—</span>;
         return (
-          <span className="inline-flex items-center gap-1.5">
-            <Badge variant="muted" size="sm" className="h-6 w-6 rounded-full p-0 justify-center">{initials(name)}</Badge>
-            <span>{name}</span>
+          <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+            <Badge variant="muted" size="sm" className="h-6 w-6 shrink-0 rounded-full p-0 justify-center">{initials(name)}</Badge>
+            <span className="truncate text-sm">{name}</span>
           </span>
         );
       },
     },
     {
-      key: 'description',
-      header: 'Work',
-      render: (r) => <span className="font-semibold text-semantic-text">{r.description}</span>,
-    },
-    {
       key: 'minutes',
       header: 'Hours',
-      sortable: true,
+      track: 'minmax(0, 1.15fr)',
       align: 'right',
-      widthClass: 'w-[90px]',
-      render: (r) => <span className="tabular-nums">{(r.minutes / 60).toFixed(1)}</span>,
-    },
-    {
-      key: 'is_billable',
-      header: 'Billable',
-      widthClass: 'w-[100px]',
-      render: (r) => r.is_billable ? <Badge variant="success" size="sm">Yes</Badge> : <Badge variant="muted" size="sm">No</Badge>,
+      sortKey: 'minutes',
+      render: (r) => (
+        <div className="rgrid-end">
+          <span className="font-bold tabular-nums text-semantic-text">{(r.minutes / 60).toFixed(1)}h</span>
+          {r.is_billable
+            ? <Badge variant="success" size="sm">Billable</Badge>
+            : <Badge variant="muted" size="sm">Non-billable</Badge>}
+        </div>
+      ),
     },
     {
       key: 'approval_status',
       header: 'Approval',
-      widthClass: 'w-[120px]',
+      track: 'minmax(0, 0.95fr)',
       render: (r) => {
         const v: 'success' | 'warning' | 'danger' | 'muted' =
           r.approval_status === 'approved' ? 'success'
@@ -819,36 +1274,34 @@ export function TimesheetsPage() {
     {
       key: 'actions',
       header: 'Actions',
+      track: '176px',
+      role: 'actions',
       align: 'right',
-      widthClass: 'w-[260px]',
-      render: (entry) => (
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
-          {entry.approval_status === 'pending' && (
-            <>
-              {(entry.user_id === user?.id || entry.employee_id === user?.id || canApprove) && (
-                <>
-                  <Button variant="secondary" size="sm" onClick={() => {
-                    setEditingId(entry.id);
-                    setProjectId(entry.project_id);
-                    setDate(entry.entry_date);
-                    setHours((entry.minutes / 60).toFixed(1));
-                    setDescription(entry.description);
-                    setBillable(entry.is_billable);
-                    editor.focusEditor();
-                  }}>Edit</Button>
-                  <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(entry)}>Delete</Button>
-                </>
-              )}
-              {canApprove && (
-                <>
-                  <Button variant="primary" size="sm" className="bg-semantic-success hover:bg-emerald-700 min-h-[32px] px-3 py-1" onClick={() => void decide(entry.id, 'approved')}>Approve</Button>
-                  <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void decide(entry.id, 'rejected')}>Reject</Button>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      ),
+      render: (entry) => {
+        if (entry.approval_status !== 'pending') return null;
+        const canEditEntry = entry.user_id === user?.id || entry.employee_id === user?.id || canApprove;
+        if (!canEditEntry) return null;
+        return (
+          <div className="rgrid-actions">
+            <Button variant="secondary" size="sm" onClick={() => {
+              setEditingId(entry.id);
+              setProjectId(entry.project_id);
+              setDate(entry.entry_date);
+              setHours((entry.minutes / 60).toFixed(1));
+              setDescription(entry.description);
+              setBillable(entry.is_billable);
+              editor.focusEditor();
+            }}>Edit</Button>
+            <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(entry)}>Delete</Button>
+            {canApprove && (
+              <>
+                <Button variant="primary" size="sm" className="bg-semantic-success hover:bg-emerald-700 min-h-[32px] px-3 py-1" onClick={() => void decide(entry.id, 'approved')}>Approve</Button>
+                <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void decide(entry.id, 'rejected')}>Reject</Button>
+              </>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -859,6 +1312,10 @@ export function TimesheetsPage() {
         eyebrow="Time tracking"
         title="Timesheets"
         description="Log work against a project. Edit or remove your entries while they are pending review."
+        statChips={[
+          { label: 'Pending review', value: pendingCount, tone: 'warning' },
+          { label: 'Hours logged', value: `${loggedHours.toFixed(1)}h`, tone: 'accent' },
+        ]}
       />
       {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
@@ -873,37 +1330,125 @@ export function TimesheetsPage() {
             {editingId && <Badge variant="warning">Editing</Badge>}
           </CardHeader>
           <CardContent>
-            <form onSubmit={(e) => void add(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Project
-                <select className={`${fieldControl} mt-1.5`} required value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                  <option value="">Choose project</option>
-                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Work date
-                <input className={`${fieldControl} mt-1.5`} type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Hours worked
-                <input className={`${fieldControl} mt-1.5`} type="number" required min="0.1" max="24" step="0.1" placeholder="e.g. 2.5" value={hours} onChange={(e) => setHours(e.target.value)} />
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Work description
-                <input className={`${fieldControl} mt-1.5`} required placeholder="What work did you complete?" value={description} onChange={(e) => setDescription(e.target.value)} />
-              </label>
-              <div className="flex flex-wrap items-end gap-3">
-                <label className="flex items-center gap-2 pb-2 text-sm text-semantic-text-muted">
-                  <input type="checkbox" className="h-4 w-4 rounded border-semantic-border accent-[var(--accent)] transition" checked={billable} onChange={(e) => setBillable(e.target.checked)} />
-                  Billable
+            <form onSubmit={(e) => void add(e)} className="space-y-5">
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                <label className="block min-w-0 text-sm font-medium text-semantic-text">
+                  Project
+                  <ProjectDropdown
+                    projects={projects}
+                    value={projectId}
+                    onChange={setProjectId}
+                  />
                 </label>
-                <Button type="submit" disabled={!projects.length}>{editingId ? 'Save entry' : 'Log time'}</Button>
-                {editingId && (
-                  <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setHours(''); setDescription(''); }}>
-                    Cancel
+
+                <label className="block min-w-0 text-sm font-medium text-semantic-text">
+                  Work date
+                  <input
+                    className={`${fieldControl} mt-1.5 min-h-12 w-full rounded-xl`}
+                    type="date"
+                    required
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                  />
+                </label>
+
+                <label className="block min-w-0 text-sm font-medium text-semantic-text">
+                  Hours worked
+                  <div className="relative mt-1.5">
+                    <input
+                      className={`${fieldControl} min-h-12 w-full rounded-xl pr-16`}
+                      type="number"
+                      required
+                      min="0.1"
+                      max="24"
+                      step="0.1"
+                      placeholder="e.g. 2.5"
+                      value={hours}
+                      onChange={(e) => setHours(e.target.value)}
+                    />
+                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-semantic-text-muted">
+                      hours
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-semantic-border bg-semantic-surface p-4 transition-colors hover:border-semantic-accent/40">
+                <span className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-semantic-accent/10 text-semantic-accent">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-5 w-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      aria-hidden="true"
+                    >
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="m8 12 2.5 2.5L16 9" />
+                    </svg>
+                  </span>
+
+                  <span>
+                    <span className="block text-sm font-semibold text-semantic-text">
+                      Billable hours
+                    </span>
+                    <span className="block text-xs text-semantic-text-muted">
+                      Mark this work as chargeable to the client
+                    </span>
+                  </span>
+                </span>
+
+                <input
+                  type="checkbox"
+                  checked={billable}
+                  onChange={(e) => setBillable(e.target.checked)}
+                  className="h-5 w-5 shrink-0 cursor-pointer rounded accent-[var(--accent)]"
+                />
+              </label>
+
+              <label className="block text-sm font-medium text-semantic-text">
+                Work description
+                <textarea
+                  className={`${fieldControl} mt-1.5 min-h-28 w-full resize-y rounded-xl py-3`}
+                  required
+                  rows={3}
+                  placeholder="Describe the work completed, progress made, or task delivered..."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+                <span className="mt-1.5 block text-xs font-normal text-semantic-text-muted">
+                  Include enough detail to make this time entry easy to review.
+                </span>
+              </label>
+
+              <div className="flex flex-col-reverse gap-3 border-t border-semantic-border pt-5 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-semantic-text-muted">
+                  Review your project, date, and hours before saving.
+                </p>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {editingId && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        setEditingId('');
+                        setHours('');
+                        setDescription('');
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+
+                  <Button
+                    type="submit"
+                    disabled={!projects.length || !projectId}
+                  >
+                    {editingId ? 'Save changes' : 'Log time'}
                   </Button>
-                )}
+                </div>
               </div>
             </form>
           </CardContent>
@@ -911,22 +1456,27 @@ export function TimesheetsPage() {
       </div>
 
       <div className="ops-rise" style={{ animationDelay: '80ms' }}>
-        <DataTable<Entry>
+        <ResponsiveGrid<Entry>
           columns={columns}
           rows={filteredEntries}
           rowKey={(r) => r.id}
-          searchable
-          searchPlaceholder="Search description..."
-          searchValue={search}
-          onSearchChange={setSearch}
-          filters={filters}
-          filterValues={filterValues}
-          onFilterChange={onFilterChange}
-          sortable
+          loading={loading}
+          wideAt="lg"
           sortKey={sortKey}
           sortDir={sortDir}
-          onSortChange={toggleSort}
-          loading={loading}
+          onSort={toggleSort}
+          toolbar={
+            <GridToolbar
+              search={search}
+              onSearch={setSearch}
+              searchPlaceholder="Search description..."
+              filters={toolbarFilters}
+              sortValue={sortSelectValue}
+              sortOptions={sortOptions}
+              onSortChange={handleSortSelect}
+            />
+          }
+          footer={`Showing ${filteredEntries.length} of ${entries.length} entries · ${shownHours.toFixed(1)}h`}
           emptyState={<EmptyState icon={Inbox} title="No time entries" description="Log your first entry using the form above." />}
         />
       </div>
@@ -1770,6 +2320,7 @@ export function ExpensesPage() {
   const toast = useToast();
   const { user } = useAuth();
   const canReview = ['owner', 'finance', 'approver'].includes(user?.role || '');
+
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [vendor, setVendor] = useState('');
   const [description, setDescription] = useState('');
@@ -1779,15 +2330,24 @@ export function ExpensesPage() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Expense | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [busyExpenseId, setBusyExpenseId] = useState<string | null>(null);
   const editor = useEditorScroll();
 
   const [search, setSearch] = useState('');
-  const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({
-    status: 'all',
-    category: 'all',
-  });
-  const [sortKey, setSortKey] = useState<string | null>('expense_date');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [sortKey, setSortKey] = useState<'expense_date' | 'amount'>('expense_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const resetForm = () => {
+    setVendor('');
+    setDescription('');
+    setCategory('general');
+    setAmount('');
+    setDate(new Date().toISOString().slice(0, 10));
+    setEditing(null);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1801,260 +2361,566 @@ export function ExpensesPage() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
+    const parsedAmount = Number(amount);
+
+    if (!vendor.trim() || !description.trim()) {
+      toast.error('Enter a vendor and expense description.');
+      return;
+    }
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      toast.error('Enter an amount greater than zero.');
+      return;
+    }
+
+    setSaving(true);
     try {
       const isEditing = Boolean(editing);
-      await apiRequest(editing ? `/billing/expenses/${editing.id}` : '/billing/expenses', {
-        method: editing ? 'PATCH' : 'POST',
-        body: JSON.stringify({
-          vendor,
-          description,
-          category,
-          amount_cents: Math.round(Number(amount) * 100),
-          expense_date: date,
-          currency: 'USD',
-        }),
-      });
-      setVendor(''); setDescription(''); setCategory('general'); setAmount(''); setEditing(null);
+      await apiRequest(
+        editing ? `/billing/expenses/${editing.id}` : '/billing/expenses',
+        {
+          method: editing ? 'PATCH' : 'POST',
+          body: JSON.stringify({
+            vendor: vendor.trim(),
+            description: description.trim(),
+            category,
+            amount_cents: Math.round(parsedAmount * 100),
+            expense_date: date,
+            currency: 'USD',
+          }),
+        },
+      );
+      resetForm();
       await load();
       toast.success(isEditing ? 'Expense updated.' : 'Expense submitted for review.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to submit expense');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const review = async (expense: Expense, status: string) => {
+  const startEditing = (expense: Expense) => {
+    setEditing(expense);
+    setVendor(expense.vendor);
+    setDescription(expense.description);
+    setCategory(expense.category || 'general');
+    setAmount((expense.amount_cents / 100).toFixed(2));
+    setDate(expense.expense_date);
+    editor.focusEditor();
+  };
+
+  const review = async (expense: Expense, status: 'approved' | 'rejected') => {
+    setBusyExpenseId(expense.id);
     try {
       await apiRequest(`/billing/expenses/${expense.id}/review`, {
         method: 'PATCH',
         body: JSON.stringify({ status }),
       });
       await load();
-      toast.success(status === 'approved' ? 'Expense approved.' : status === 'rejected' ? 'Expense rejected.' : 'Expense review updated.');
+      toast.success(status === 'approved' ? 'Expense approved.' : 'Expense rejected.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to review expense');
+    } finally {
+      setBusyExpenseId(null);
     }
   };
 
   const remove = async (expense: Expense) => {
     if (!window.confirm('Delete this pending expense?')) return;
+    setBusyExpenseId(expense.id);
     try {
       await apiRequest(`/billing/expenses/${expense.id}`, { method: 'DELETE' });
       await load();
       toast.success('Expense deleted.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Unable to delete expense');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to delete expense');
+    } finally {
+      setBusyExpenseId(null);
     }
   };
 
   const filtered = useMemo(() => {
-    let list = [...expenses];
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter((r) => r.vendor.toLowerCase().includes(q) || r.description.toLowerCase().includes(q));
-    }
-    const st = filterValues.status as string;
-    if (st && st !== 'all') list = list.filter((r) => r.status === st);
-    const cat = filterValues.category as string;
-    if (cat && cat !== 'all') list = list.filter((r) => r.category === cat);
-    if (sortKey) {
-      list.sort((a, b) => {
-        let cmp = 0;
-        if (sortKey === 'expense_date') cmp = a.expense_date.localeCompare(b.expense_date);
-        else if (sortKey === 'amount') cmp = a.amount_cents - b.amount_cents;
-        return sortDir === 'desc' ? -cmp : cmp;
-      });
-    }
+    const query = search.trim().toLowerCase();
+    const list = expenses.filter((expense) => {
+      const matchesSearch =
+        !query ||
+        (expense.vendor || '').toLowerCase().includes(query) ||
+        (expense.description || '').toLowerCase().includes(query);
+      const matchesStatus = statusFilter === 'all' || expense.status === statusFilter;
+      const matchesCategory = categoryFilter === 'all' || expense.category === categoryFilter;
+      return matchesSearch && matchesStatus && matchesCategory;
+    });
+
+    list.sort((a, b) => {
+      const comparison =
+        sortKey === 'expense_date'
+          ? a.expense_date.localeCompare(b.expense_date)
+          : a.amount_cents - b.amount_cents;
+      return sortDir === 'desc' ? -comparison : comparison;
+    });
     return list;
-  }, [expenses, search, filterValues, sortKey, sortDir]);
+  }, [expenses, search, statusFilter, categoryFilter, sortKey, sortDir]);
 
-  const toggleSort = (key: string) => {
-    if (sortKey === key) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-    else { setSortKey(key); setSortDir('desc'); }
+  const totalCents = expenses.reduce((sum, expense) => sum + expense.amount_cents, 0);
+  const approvedCents = expenses
+    .filter((expense) => expense.status === 'approved')
+    .reduce((sum, expense) => sum + expense.amount_cents, 0);
+  const pendingCount = expenses.filter((expense) => expense.status === 'pending').length;
+  const rejectedCount = expenses.filter((expense) => expense.status === 'rejected').length;
+
+  const statusVariant = (status: string): 'success' | 'warning' | 'danger' | 'muted' => {
+    if (status === 'approved') return 'success';
+    if (status === 'pending') return 'warning';
+    if (status === 'rejected') return 'danger';
+    return 'muted';
   };
 
-  const onFilterChange = (key: string, value: string | string[]) => {
-    setFilterValues((old) => ({ ...old, [key]: value }));
-  };
-
-  const filters: DataTableFilterDef[] = [
-    {
-      key: 'status',
-      label: 'Status',
-      type: 'dropdown',
-      options: [
-        { value: 'all', label: 'All' },
-        { value: 'pending', label: 'Pending' },
-        { value: 'approved', label: 'Approved' },
-        { value: 'rejected', label: 'Rejected' },
-      ],
-    },
-    {
-      key: 'category',
-      label: 'Category',
-      type: 'dropdown',
-      options: [
-        { value: 'all', label: 'All categories' },
-        ...CATEGORY_OPTIONS_EXPENSE,
-      ],
-    },
-  ];
-
-  const columns: DataTableColumn<Expense>[] = [
-    {
-      key: 'expense_date',
-      header: 'Date',
-      sortable: true,
-      widthClass: 'w-[130px]',
-      accessor: (r) => r.expense_date,
-    },
-    { key: 'vendor', header: 'Vendor', accessor: (r) => <span className="font-semibold text-semantic-text">{r.vendor}</span> },
-    {
-      key: 'category',
-      header: 'Category',
-      widthClass: 'w-[120px]',
-      render: (r) => {
-        const label = CATEGORY_OPTIONS_EXPENSE.find((o) => o.value === r.category)?.label || r.category;
-        return <Badge variant={expenseCategoryColor(r.category)}>{label}</Badge>;
-      },
-    },
-    { key: 'description', header: 'Description', accessor: (r) => r.description },
-    {
-      key: 'amount_cents',
-      header: 'Amount',
-      align: 'right',
-      sortable: true,
-      render: (r) => <span className="font-bold tabular-nums text-semantic-text">{formatCurrency(r.amount_cents, r.currency)}</span>,
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      widthClass: 'w-[110px]',
-      render: (r) => {
-        const v: 'success' | 'warning' | 'danger' | 'muted' =
-          r.status === 'approved' ? 'success' :
-          r.status === 'rejected' ? 'danger' :
-          r.status === 'pending' ? 'warning' : 'muted';
-        return <Badge variant={v}>{r.status}</Badge>;
-      },
-    },
-    {
-      key: 'actions',
-      header: 'Actions',
-      align: 'right',
-      widthClass: 'w-[260px]',
-      render: (exp) => (
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
-          {exp.status === 'pending' && exp.submitted_by === user?.id && (
-            <>
-              <Button variant="secondary" size="sm" onClick={() => {
-                setEditing(exp);
-                setVendor(exp.vendor);
-                setDescription(exp.description);
-                setCategory(exp.category || 'general');
-                setAmount((exp.amount_cents / 100).toFixed(2));
-                setDate(exp.expense_date);
-                editor.focusEditor();
-              }}>Edit</Button>
-              <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(exp)}>Delete</Button>
-            </>
-          )}
-          {canReview && exp.status === 'pending' && (
-            <>
-              <Button variant="primary" size="sm" className="bg-semantic-success hover:bg-emerald-700 min-h-[32px] px-3 py-1" onClick={() => void review(exp, 'approved')}>Approve</Button>
-              <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void review(exp, 'rejected')}>Reject</Button>
-            </>
-          )}
-        </div>
-      ),
-    },
-  ];
+  const inputClass =
+    `${fieldControl} mt-1.5 w-full min-w-0 max-w-full box-border`;
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="page-shell w-full min-w-0 max-w-full space-y-5 overflow-x-clip">
       <OpsStyles />
+
       <PageHeader
         eyebrow="Finance"
-        title="Expenses & Vendor Bills"
-        description="Submit an expense with its vendor, amount and date."
+        title="Expense management"
+        description="Submit, track and review business expenses in one place."
       />
-      {error && <Alert variant="danger" title="Error">{error}</Alert>}
 
-      <div ref={editor.ref} className={editor.className}>
-        <Card className="relative overflow-hidden">
+      {error && (
+        <Alert variant="danger" title="Unable to load expenses">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="min-w-0 break-words">{error}</span>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void load()}>
+              Try again
+            </Button>
+          </div>
+        </Alert>
+      )}
+
+      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="min-w-0">
+          <CardContent>
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-semantic-text-muted">Total expenses</p>
+                <p className="mt-2 break-words text-2xl font-bold tracking-tight text-semantic-text">
+                  {formatCurrency(totalCents, 'USD')}
+                </p>
+                <p className="mt-1 text-xs text-semantic-text-muted">All loaded records</p>
+              </div>
+              <span className="rounded-xl bg-semantic-surface-subtle p-2 text-semantic-text-muted">
+                <ReceiptText className="h-5 w-5" aria-hidden="true" />
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="min-w-0">
+          <CardContent>
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-semantic-text-muted">Pending review</p>
+                <p className="mt-2 text-2xl font-bold tracking-tight text-semantic-text">
+                  {pendingCount}
+                </p>
+                <p className="mt-1 text-xs text-semantic-text-muted">Awaiting a decision</p>
+              </div>
+              <span className="rounded-xl bg-semantic-warning-soft p-2 text-semantic-warning">
+                <Clock3 className="h-5 w-5" aria-hidden="true" />
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="min-w-0">
+          <CardContent>
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-semantic-text-muted">Approved amount</p>
+                <p className="mt-2 break-words text-2xl font-bold tracking-tight text-semantic-text">
+                  {formatCurrency(approvedCents, 'USD')}
+                </p>
+                <p className="mt-1 text-xs text-semantic-text-muted">Approved expenses</p>
+              </div>
+              <span className="rounded-xl bg-semantic-success-soft p-2 text-semantic-success">
+                <CircleCheck className="h-5 w-5" aria-hidden="true" />
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="min-w-0">
+          <CardContent>
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-semantic-text-muted">Rejected expenses</p>
+                <p className="mt-2 text-2xl font-bold tracking-tight text-semantic-text">
+                  {rejectedCount}
+                </p>
+                <p className="mt-1 text-xs text-semantic-text-muted">Require follow-up if needed</p>
+              </div>
+              <span className="rounded-xl bg-semantic-danger-soft p-2 text-semantic-danger">
+                <CircleX className="h-5 w-5" aria-hidden="true" />
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div ref={editor.ref} className={`${editor.className} min-w-0`}>
+        <Card className="relative min-w-0 overflow-hidden">
           <FormAccent />
           <CardHeader>
-            <div>
-              <h2 className="font-semibold text-semantic-text">{editing ? 'Update expense' : 'Submit expense'}</h2>
-              <p className="text-xs text-semantic-text-muted mt-0.5">Pending entries can be edited or removed; approved records remain in the ledger.</p>
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="font-semibold text-semantic-text">
+                  {editing ? 'Edit expense' : 'Submit a new expense'}
+                </h2>
+                <p className="mt-1 text-sm text-semantic-text-muted">
+                  Pending expenses can be edited or deleted. Submitted records are sent for review.
+                </p>
+              </div>
+              {editing && <Badge variant="warning">Editing pending expense</Badge>}
             </div>
-            {editing && <Badge variant="warning">Editing</Badge>}
           </CardHeader>
+
           <CardContent>
-            <form onSubmit={(e) => void create(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              <label className="text-xs font-semibold text-semantic-text-muted">
+            <form onSubmit={(e) => void create(e)} className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
+              <label className="block min-w-0 text-sm font-medium text-semantic-text">
                 Vendor
-                <input className={`${fieldControl} mt-1.5`} required placeholder="Business or supplier" value={vendor} onChange={(e) => setVendor(e.target.value)} />
+                <input
+                  className={inputClass}
+                  required
+                  maxLength={200}
+                  placeholder="Business or supplier"
+                  value={vendor}
+                  onChange={(e) => setVendor(e.target.value)}
+                />
               </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
+
+              <label className="block min-w-0 text-sm font-medium text-semantic-text">
                 Expense description
-                <input className={`${fieldControl} mt-1.5`} required placeholder="What was purchased?" value={description} onChange={(e) => setDescription(e.target.value)} />
+                <input
+                  className={inputClass}
+                  required
+                  maxLength={500}
+                  placeholder="What was purchased?"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
               </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
+
+              <label className="block min-w-0 text-sm font-medium text-semantic-text">
                 Category
-                <select className={`${fieldControl} mt-1.5`} value={category} onChange={(e) => setCategory(e.target.value)}>
-                  {CATEGORY_OPTIONS_EXPENSE.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                <select
+                  className={inputClass}
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                >
+                  {CATEGORY_OPTIONS_EXPENSE.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
+
+              <label className="block min-w-0 text-sm font-medium text-semantic-text">
                 Amount (USD)
-                <input className={`${fieldControl} mt-1.5`} required type="number" min="0.01" step="0.01" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} />
-              </label>
-              <div className="flex flex-col sm:flex-row gap-3 items-end">
-                <label className="text-xs font-semibold text-semantic-text-muted w-full sm:flex-1">
-                  Expense date
-                  <input className={`${fieldControl} mt-1.5`} required type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-                </label>
-                <div className="flex gap-2 pb-0.5">
-                  <Button type="submit">{editing ? 'Save changes' : 'Submit expense'}</Button>
-                  {editing && (
-                    <Button type="button" variant="secondary" onClick={() => { setEditing(null); setVendor(''); setDescription(''); setCategory('general'); setAmount(''); }}>
-                      Cancel
-                    </Button>
-                  )}
+                <div className="relative mt-1.5 min-w-0">
+                  <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-semantic-text-muted">
+                    $
+                  </span>
+                  <input
+                    className={`${fieldControl} box-border w-full min-w-0 max-w-full pl-7`}
+                    required
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                  />
                 </div>
+              </label>
+
+              <label className="block min-w-0 text-sm font-medium text-semantic-text">
+                Expense date
+                <input
+                  className={inputClass}
+                  required
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                />
+              </label>
+
+              <div className="flex min-w-0 flex-col justify-end gap-2 sm:flex-row md:col-span-2">
+                <Button type="submit" disabled={saving} className="w-full sm:w-auto">
+                  {saving ? 'Saving…' : editing ? 'Save changes' : 'Submit expense'}
+                </Button>
+                {editing && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={saving}
+                    className="w-full sm:w-auto"
+                    onClick={resetForm}
+                  >
+                    Cancel
+                  </Button>
+                )}
               </div>
             </form>
           </CardContent>
         </Card>
       </div>
 
-      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
-        <DataTable<Expense>
-          columns={columns}
-          rows={filtered}
-          rowKey={(r) => r.id}
-          searchable
-          searchPlaceholder="Search vendor or description..."
-          searchValue={search}
-          onSearchChange={setSearch}
-          filters={filters}
-          filterValues={filterValues}
-          onFilterChange={onFilterChange}
-          sortable
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSortChange={toggleSort}
-          loading={loading}
-          emptyState={<EmptyState icon={Inbox} title="No expenses submitted" description="Use the form above to submit an expense." />}
-        />
-      </div>
+      <Card className="min-w-0 overflow-hidden">
+        <CardHeader>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-semibold text-semantic-text">Expense records</h2>
+              <p className="mt-1 text-sm text-semantic-text-muted">
+                {loading ? 'Loading records…' : `${filtered.length} of ${expenses.length} expenses`}
+              </p>
+            </div>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void load()} disabled={loading}>
+              <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          <div className="mb-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <label className="block min-w-0 text-sm font-medium text-semantic-text sm:col-span-2 xl:col-span-1">
+              Search expenses
+              <div className="relative mt-1.5 min-w-0">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-semantic-text-muted" aria-hidden="true" />
+                <input
+                  className={`${fieldControl} box-border w-full min-w-0 pl-9`}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Vendor or description…"
+                />
+              </div>
+            </label>
+
+            <label className="block min-w-0 text-sm font-medium text-semantic-text">
+              Status
+              <select className={inputClass} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </label>
+
+            <label className="block min-w-0 text-sm font-medium text-semantic-text">
+              Category
+              <select className={inputClass} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                <option value="all">All categories</option>
+                {CATEGORY_OPTIONS_EXPENSE.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block min-w-0 text-sm font-medium text-semantic-text">
+              Sort by
+              <select
+                className={inputClass}
+                value={`${sortKey}:${sortDir}`}
+                onChange={(e) => {
+                  const [key, direction] = e.target.value.split(':') as [
+                    'expense_date' | 'amount',
+                    'asc' | 'desc',
+                  ];
+                  setSortKey(key);
+                  setSortDir(direction);
+                }}
+              >
+                <option value="expense_date:desc">Newest first</option>
+                <option value="expense_date:asc">Oldest first</option>
+                <option value="amount:desc">Highest amount</option>
+                <option value="amount:asc">Lowest amount</option>
+              </select>
+            </label>
+          </div>
+
+          {(search || statusFilter !== 'all' || categoryFilter !== 'all') && (
+            <div className="mb-4">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearch('');
+                  setStatusFilter('all');
+                  setCategoryFilter('all');
+                }}
+              >
+                Clear filters
+              </Button>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="space-y-3 py-2" aria-label="Loading expenses">
+              {[0, 1, 2].map((item) => (
+                <div key={item} className="h-24 animate-pulse rounded-xl bg-semantic-surface-subtle" />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-semantic-border px-5 py-12 text-center">
+              <span className="mb-3 rounded-full bg-semantic-surface-subtle p-3">
+                <Inbox className="h-6 w-6 text-semantic-text-muted" aria-hidden="true" />
+              </span>
+              <h3 className="font-semibold text-semantic-text">
+                {expenses.length === 0 ? 'No expenses submitted yet' : 'No matching expenses'}
+              </h3>
+              <p className="mt-1 max-w-sm text-sm text-semantic-text-muted">
+                {expenses.length === 0
+                  ? 'Submit your first expense using the form above.'
+                  : 'Try changing your search or filters.'}
+              </p>
+              {expenses.length > 0 && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => {
+                    setSearch('');
+                    setStatusFilter('all');
+                    setCategoryFilter('all');
+                  }}
+                >
+                  Clear filters
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="grid min-w-0 grid-cols-1 gap-3">
+              {filtered.map((expense) => {
+                const categoryLabel =
+                  CATEGORY_OPTIONS_EXPENSE.find((option) => option.value === expense.category)?.label ||
+                  expense.category ||
+                  'General';
+                const isOwnerPending =
+                  expense.status === 'pending' && expense.submitted_by === user?.id;
+                const isBusy = busyExpenseId === expense.id;
+
+                return (
+                  <article
+                    key={expense.id}
+                    className="min-w-0 rounded-xl border border-semantic-border bg-semantic-surface p-4 transition-colors hover:border-semantic-border-strong"
+                  >
+                    <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className="shrink-0 rounded-xl bg-semantic-surface-subtle p-2.5 text-semantic-text-muted">
+                          <ReceiptText className="h-5 w-5" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="break-words font-semibold text-semantic-text">
+                            {expense.vendor || 'Unknown vendor'}
+                          </h3>
+                          <p className="mt-1 break-words text-sm text-semantic-text-muted">
+                            {expense.description || 'No description provided'}
+                          </p>
+                          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                            <Badge variant={statusVariant(expense.status)}>{expense.status}</Badge>
+                            <Badge variant={expenseCategoryColor(expense.category)}>
+                              {categoryLabel}
+                            </Badge>
+                            <span className="inline-flex items-center gap-1 text-xs text-semantic-text-muted">
+                              <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
+                              {expense.expense_date}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
+                        <p className="break-words text-xl font-bold tabular-nums text-semantic-text">
+                          {formatCurrency(expense.amount_cents, expense.currency)}
+                        </p>
+                        <p className="text-xs text-semantic-text-muted">Expense amount</p>
+                      </div>
+                    </div>
+
+                    {(isOwnerPending || (canReview && expense.status === 'pending')) && (
+                      <div className="mt-4 flex min-w-0 flex-wrap gap-2 border-t border-semantic-border pt-3">
+                        {isOwnerPending && (
+                          <>
+                            <Button type="button" variant="secondary" size="sm" disabled={isBusy} onClick={() => startEditing(expense)}>
+                              <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                              Edit
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={isBusy}
+                              className="text-semantic-danger hover:bg-semantic-danger-soft hover:text-semantic-danger"
+                              onClick={() => void remove(expense)}
+                            >
+                              <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                              Delete
+                            </Button>
+                          </>
+                        )}
+                        {canReview && expense.status === 'pending' && (
+                          <>
+                            <Button
+                              type="button"
+                              variant="primary"
+                              size="sm"
+                              disabled={isBusy}
+                              className="bg-semantic-success hover:bg-emerald-700"
+                              onClick={() => void review(expense, 'approved')}
+                            >
+                              <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                              {isBusy ? 'Processing…' : 'Approve'}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={isBusy}
+                              className="text-semantic-danger hover:bg-semantic-danger-soft hover:text-semantic-danger"
+                              onClick={() => void review(expense, 'rejected')}
+                            >
+                              <X className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                              Reject
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Documents                                                           */

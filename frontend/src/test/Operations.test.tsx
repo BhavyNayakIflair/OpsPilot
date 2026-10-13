@@ -215,9 +215,10 @@ describe('TimesheetsPage (Characterization)', () => {
     renderWithRouter(<TimesheetsPage />);
     expect(await screen.findByText('Developed API auth endpoints')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/^Project/i), { target: { value: 'proj-1' } });
+    fireEvent.click(screen.getAllByRole('combobox', { name: 'Project' })[0]);
+    fireEvent.click(screen.getByRole('option', { name: 'Client Portal' }));
     fireEvent.change(screen.getByPlaceholderText('e.g. 2.5'), { target: { value: '2' } });
-    fireEvent.change(screen.getByPlaceholderText('What work did you complete?'), { target: { value: 'Added tests' } });
+    fireEvent.change(screen.getByPlaceholderText(/Describe the work completed/i), { target: { value: 'Added tests' } });
     fireEvent.submit(screen.getByRole('button', { name: 'Log time' }).closest('form')!);
 
     await waitFor(() =>
