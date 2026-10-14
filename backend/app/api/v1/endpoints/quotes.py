@@ -69,8 +69,8 @@ async def draft_quote_async(
     provider: LLMProvider = Depends(get_llm_provider),
 ):
     lead = await _owned(db, Lead, data.lead_id, org.id)
-    if lead.status in ("won", "lost"):
-        raise HTTPException(status_code=409, detail="Quotes can only be drafted for open leads")
+    if lead.is_lost():
+        raise HTTPException(status_code=409, detail="Quotes cannot be drafted for lost leads")
     if data.rate_card_id:
         rate_card = await _owned(db, RateCard, data.rate_card_id, org.id)
     else:
@@ -152,8 +152,8 @@ def _totals(lines, discount_bps, tax_bps):
 async def draft_quote(data: QuoteDraftRequest, org: Organization = Depends(get_current_tenant),
                       db: AsyncSession = Depends(get_db), provider: LLMProvider = Depends(get_llm_provider)):
     lead = await _owned(db, Lead, data.lead_id, org.id)
-    if lead.status in ("won", "lost"):
-        raise HTTPException(status_code=409, detail="Quotes can only be drafted for open leads")
+    if lead.is_lost():
+        raise HTTPException(status_code=409, detail="Quotes cannot be drafted for lost leads")
     if data.rate_card_id:
         rate_card = await _owned(db, RateCard, data.rate_card_id, org.id)
     else:

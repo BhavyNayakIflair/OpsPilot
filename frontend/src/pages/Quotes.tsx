@@ -18,7 +18,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type Lead = { id: string; title: string };
+type Lead = { id: string; title: string; status?: string };
 type RateCard = { id: string; name: string; currency: string; default_rate_cents: number; description?: string | null };
 type Quote = { id: string; title: string; status: string; currency: string; subtotal_cents: number; total_cents: number; accept_token: string; lead_id?: string | null; created_at?: string; accepted_at?: string | null; line_items: { id: string; description: string; quantity: number; amount_cents: number }[] };
 type QuoteDraft = { quote: { id: string; title: string; description?: string | null; lead_id: string; rate_card_id?: string; currency: string; discount_bps: number; tax_bps: number; terms?: string | null; line_items: { description: string; quantity: number; unit_price_cents: number }[] }; assumptions: string[] };
@@ -364,6 +364,11 @@ export function Quotes() {
   const listRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
 
+  const quoteableLeads = useMemo(
+    () => leads.filter((lead) => (lead.status || 'open').toLowerCase() !== 'lost'),
+    [leads]
+  );
+
   const load = useCallback(async () => {
     setError('');
     try {
@@ -493,6 +498,11 @@ export function Quotes() {
       setError('Choose a lead before drafting a quote with AI.');
       return;
     }
+    const selected = leads.find((lead) => lead.id === leadId);
+    if ((selected?.status || '').toLowerCase() === 'lost') {
+      setError('Quotes cannot be drafted for lost leads. Choose an open or won lead.');
+      return;
+    }
     setAiBusy(true);
     setAiError('');
     setAiPreview(null);
@@ -573,6 +583,11 @@ export function Quotes() {
       setError('Choose a lead before starting the quote agent.');
       return;
     }
+    const selected = leads.find((lead) => lead.id === leadId);
+    if ((selected?.status || '').toLowerCase() === 'lost') {
+      setError('Quotes cannot be drafted for lost leads. Choose an open or won lead.');
+      return;
+    }
     setAgentBusy(true);
     setAgentError('');
     setError('');
@@ -642,11 +657,38 @@ export function Quotes() {
 
   const copyAcceptance = async (quote: Quote) => {
     const url = `${window.location.origin}/quote-accept/${quote.accept_token}`;
+    const copyWithFallback = () => {
+      const input = document.createElement('textarea');
+      input.value = url;
+      input.setAttribute('readonly', '');
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.select();
+      input.setSelectionRange(0, input.value.length);
+      try {
+        if (!document.execCommand('copy')) {
+          throw new Error('Browser could not copy the acceptance link');
+        }
+      } finally {
+        input.remove();
+      }
+    };
+
     try {
-      await navigator.clipboard.writeText(url);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        copyWithFallback();
+      }
       toast.success('Acceptance link copied to clipboard.');
     } catch {
-      toast.error(`Could not copy the link. Copy it manually: ${url}`);
+      try {
+        copyWithFallback();
+        toast.success('Acceptance link copied to clipboard.');
+      } catch {
+        toast.error(`Could not copy the link. Copy it manually: ${url}`);
+      }
     }
   };
 
@@ -1195,7 +1237,11 @@ export function Quotes() {
                   onChange={(e) => setLeadId(e.target.value)}
                 >
                   <option value="">Choose a lead (optional)</option>
-                  {leads.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
+                  {quoteableLeads.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.title}{l.status && l.status !== 'open' ? ` · ${l.status}` : ''}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="text-xs font-semibold text-semantic-text-muted">

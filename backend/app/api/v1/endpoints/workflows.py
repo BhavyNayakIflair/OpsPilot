@@ -62,8 +62,8 @@ async def run_quote_agent(data: QuoteAgentRequest, user: User = Depends(get_curr
     lead = await db.scalar(select(Lead).where(Lead.id == data.lead_id, Lead.org_id == org.id))
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-    if lead.status in ("won", "lost"):
-        raise HTTPException(status_code=409, detail="Quotes can only be drafted for open leads")
+    if lead.is_lost():
+        raise HTTPException(status_code=409, detail="Quotes cannot be drafted for lost leads")
     if data.rate_card_id:
         card = await db.scalar(select(RateCard).where(RateCard.id == data.rate_card_id, RateCard.org_id == org.id))
         if not card:

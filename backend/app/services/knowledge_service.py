@@ -199,7 +199,9 @@ async def answer_rag_question(
 
     system_prompt = (
         "You are an assistant answering questions about company internal documentation. "
-        "Base your answer strictly on the provided context chunks. "
+        "Write a concise answer (2–6 sentences) to the user's question. "
+        "Do not paste or reproduce entire documents, files, or source chunks. "
+        "Base the answer strictly on the provided context chunks. "
         "Every factual claim must cite its source chunk using [Chunk <id>]. "
         "If the answer cannot be determined strictly from the provided context chunks, "
         "respond exactly with 'not found in documents'. Do not extrapolate or guess."
@@ -207,28 +209,35 @@ async def answer_rag_question(
     user_prompt = f"Context Documents:\n{context_blocks}\n\nQuestion: {question}"
 
     try:
-        from app.ai.routing.router import ai_router
-        from app.ai.providers.base import TextRequest
-
-        req = TextRequest(
-            prompt=user_prompt,
-            system=system_prompt,
+        raw = await asyncio.to_thread(
+            provider.generate,
+            user_prompt,
+            system_prompt,
+            0.2,
+            None,
             task_type="rag_answer",
             org_id=org_id,
         )
-        response = await ai_router.execute_text("rag_answer", req)
+        answer = (raw if isinstance(raw, str) else str(raw)).strip()
+        if not answer:
+            raise ProviderError("Empty RAG answer")
         return {
-            "answer": response.text.strip(),
+            "answer": answer,
             "citations": citations,
             "degraded": False,
-            "model_used": response.model,
-            "provider_used": response.provider,
+            "provider_used": getattr(provider, "provider_id", None),
         }
     except Exception as exc:
-        # Degraded mode: return ranked passages with citations and no synthesis
-        passages = "\n\n".join([f"[Chunk {r.chunk.id}]: {r.chunk.content}" for r in results])
+        # Degraded mode: short extractive answer from the top chunk, never the full file.
+        top = results[0]
+        snippet = " ".join(top.chunk.content.split())
+        if len(snippet) > 280:
+            snippet = snippet[:277].rsplit(" ", 1)[0] + "…"
         return {
-            "answer": f"AI synthesis unavailable ({exc}). Relevant passages:\n\n{passages}",
+            "answer": (
+                f"{snippet} [Chunk {top.chunk.id}]. "
+                f"(Direct synthesis unavailable: {str(exc)[:120]})"
+            ),
             "citations": citations,
             "degraded": True,
         }

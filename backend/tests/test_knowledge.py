@@ -73,3 +73,28 @@ async def test_blank_queries_short_circuit_cleanly(db_session):
         "citations": [],
         "degraded": False,
     }
+
+
+class AnsweringProvider(FakeProvider):
+    def generate(self, prompt, system="", temperature=0.2, response_model=None, **kwargs):
+        return "Payment is due within 30 days of invoice [Chunk cited]."
+
+    def embed(self, texts, **kwargs):
+        return [[1.0] + [0.0] * 767 for _ in texts]
+
+
+@pytest.mark.asyncio
+async def test_rag_answer_uses_provider_and_does_not_dump_full_document(db_session):
+    provider = AnsweringProvider()
+    full_document = "CONTRACT FILE\n" + ("payment terms thirty days net. " * 80)
+    org, document = await _document(db_session, "Master services agreement", full_document)
+    await ingest_document(db_session, document, provider)
+    await db_session.commit()
+
+    result = await answer_rag_question(org.id, "What are the payment terms?", db_session, provider)
+
+    assert result["answer"] == "Payment is due within 30 days of invoice [Chunk cited]."
+    assert "CONTRACT FILE" not in result["answer"]
+    assert full_document not in result["answer"]
+    assert result["citations"]
+    assert result["citations"][0]["document_title"] == "Master services agreement"

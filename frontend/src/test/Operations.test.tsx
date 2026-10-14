@@ -52,6 +52,33 @@ describe('ApprovalsPage', () => {
     expect(screen.getByText('Quote draft review · Portal rebuild')).toBeInTheDocument();
   });
 
+  it('calculates quote preview totals when the API omits total_cents', async () => {
+    vi.mocked(apiRequest).mockImplementation(async (endpoint: string) => {
+      if (endpoint === '/workflows/approvals') {
+        return [{
+          id: 'q2',
+          entity_type: 'quote_agent',
+          label: 'Quote draft review · BDE Sales',
+          created_at: '2026-01-04T10:00:00Z',
+          quote_preview: {
+            title: 'BDE Sales',
+            currency: 'USD',
+            discount_bps: 1000,
+            tax_bps: 500,
+            line_items: [
+              { description: 'BDE Research', quantity: 1, unit_price_cents: 8500 },
+              { description: 'BDE Research and improvement', quantity: 1, unit_price_cents: 6000 },
+            ],
+          },
+        }] as never;
+      }
+      return [] as never;
+    });
+
+    renderWithRouter(<ApprovalsPage />);
+    expect(await screen.findByText('$137.03')).toBeInTheDocument();
+  });
+
   it('filters the queue by entity type using the API entity_type values', async () => {
     renderWithRouter(<ApprovalsPage />);
     await screen.findByText('Homepage design work');

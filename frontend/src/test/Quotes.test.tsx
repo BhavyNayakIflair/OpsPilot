@@ -55,4 +55,38 @@ describe('Quotes', () => {
     expect(form.getAllByPlaceholderText('0.00')).toHaveLength(2);
     expect(form.getByLabelText('Quantity for item 2')).toBeInTheDocument();
   });
+
+  it('copies an acceptance link using the fallback when clipboard API is unavailable', async () => {
+    vi.mocked(apiRequest).mockImplementation(async (endpoint: string) => {
+      if (endpoint === '/quotes') {
+        return [{
+          id: 'quote-1',
+          title: 'Website implementation',
+          status: 'draft',
+          currency: 'USD',
+          subtotal_cents: 10000,
+          total_cents: 10000,
+          accept_token: 'accept-token-1',
+          line_items: [],
+        }] as never;
+      }
+      if (endpoint === '/crm/leads' || endpoint === '/quotes/rate-cards') return [] as never;
+      return {} as never;
+    });
+    const execCommand = vi.fn(() => true);
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+
+    renderQuotes();
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept link' }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith('copy'));
+    expect(document.body).not.toHaveTextContent('/quote-accept/accept-token-1');
+    if (clipboardDescriptor) {
+      Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
 });

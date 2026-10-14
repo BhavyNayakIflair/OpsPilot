@@ -28,11 +28,15 @@ type Entry = { id: string; project_id: string; user_id?: string; employee_id?: s
 type LeaveRequest = { id: string; employee_id: string; start_date: string; end_date: string; status: string; reason?: string };
 type Invoice = { id: string; invoice_number: string; client_name: string; status: string; currency: string; subtotal_cents: number; tax_cents: number; total_cents: number; paid_cents: number; issue_date: string; due_date: string; notes?: string | null; project_id?: string | null; line_items: { id: string; description: string; quantity: number; unit_price_cents: number; amount_cents: number }[] };
 type Expense = { id: string; submitted_by?: string; vendor: string; category: string; description: string; amount_cents: number; currency: string; expense_date: string; status: string };
-type ApprovalItem = { id: string; entity_type: string; label: string; reason?: string; amount_cents?: number; currency?: string; created_at: string; assumptions?: string[]; quote_preview?: { title?: string; currency?: string; total_cents?: number; line_items?: { description: string; quantity: number; unit_price_cents: number }[] } };
+type ApprovalItem = { id: string; entity_type: string; label: string; reason?: string; amount_cents?: number; currency?: string; created_at: string; assumptions?: string[]; quote_preview?: { title?: string; currency?: string; total_cents?: number; discount_bps?: number; tax_bps?: number; line_items?: { description: string; quantity: number; unit_price_cents: number }[] } };
 type MigrationJob = { id: string; filename: string; target: string; status: string; row_count?: number; imported?: number; errors?: string[]; sample?: Record<string, string>[] };
 type Document = { id: string; title: string; category: string; content: string; updated_at: string };
 type WorkflowRun = { id: string; workflow_type: string; status: string; created_at: string; input_data?: Record<string, unknown>; result_data: { items?: Record<string, unknown>[]; quote_id?: string; flags?: string[]; error?: string } };
-type KnowledgeResult = { content: string; document: { id: string; title: string }; relevance_score: number };
+type KnowledgeAskResult = {
+  answer: string;
+  citations: { chunk_id: string; document_id: string; document_title: string; relevance_score: number }[];
+  degraded?: boolean;
+};
 
 const fieldControl = 'rounded-ui-xl px-3.5 py-2 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border w-full';
 
@@ -559,6 +563,17 @@ function formatCurrency(cents: number, currency = 'USD'): string {
   } catch {
     return `${currency} ${(cents / 100).toFixed(2)}`;
   }
+}
+
+function quotePreviewTotalCents(preview: NonNullable<ApprovalItem['quote_preview']>): number {
+  if (preview.total_cents != null) return preview.total_cents;
+
+  const subtotal = (preview.line_items || []).reduce(
+    (sum, line) => sum + line.quantity * line.unit_price_cents,
+    0,
+  );
+  const discounted = Math.floor((subtotal * (10000 - (preview.discount_bps || 0)) + 5000) / 10000);
+  return discounted + Math.floor((discounted * (preview.tax_bps || 0) + 5000) / 10000);
 }
 
 const CATEGORY_OPTIONS_EXPENSE = [
@@ -3040,7 +3055,8 @@ export function DocumentsPage() {
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState('');
   const [semanticQuery, setSemanticQuery] = useState('');
-  const [knowledge, setKnowledge] = useState<KnowledgeResult[]>([]);
+  const [knowledgeAnswer, setKnowledgeAnswer] = useState<KnowledgeAskResult | null>(null);
+  const [askedQuery, setAskedQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filterCategory, setFilterCategory] = useState('all');
@@ -3101,8 +3117,14 @@ export function DocumentsPage() {
     e.preventDefault();
     if (!semanticQuery.trim()) return;
     setSearching(true); setError('');
+    setKnowledgeAnswer(null);
     try {
-      setKnowledge(await apiRequest<KnowledgeResult[]>(`/knowledge/search?q=${encodeURIComponent(semanticQuery)}&k=5`));
+      const result = await apiRequest<KnowledgeAskResult>('/knowledge/ask', {
+        method: 'POST',
+        body: JSON.stringify({ question: semanticQuery.trim(), k: 5 }),
+      });
+      setKnowledgeAnswer(result);
+      setAskedQuery(semanticQuery.trim());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'AI knowledge search is unavailable');
     } finally {
@@ -3194,7 +3216,7 @@ export function DocumentsPage() {
                 <Sparkles className="h-4 w-4 text-semantic-accent" />
                 <div>
                   <h2 className="font-semibold text-semantic-text">Ask your documents</h2>
-                  <p className="text-xs text-semantic-text-muted mt-0.5">Search by meaning to find relevant passages.</p>
+                  <p className="text-xs text-semantic-text-muted mt-0.5">Ask a question and get an answer grounded in saved documents and SOWs.</p>
                 </div>
               </div>
             </CardHeader>
@@ -3210,27 +3232,39 @@ export function DocumentsPage() {
                   />
                 </div>
                 <Button type="submit" loading={searching} disabled={!semanticQuery.trim()}>
-                  {searching ? 'Searching…' : 'Search knowledge'}
+                  {searching ? 'Asking…' : 'Ask with AI'}
                 </Button>
               </form>
-              {knowledge.length > 0 && (
+              {knowledgeAnswer && knowledgeAnswer.answer !== 'not found in documents' && (
                 <div className="space-y-3">
-                  {knowledge.map((item, index) => (
-                    <article
-                      key={`${item.document.id}-${index}`}
-                      className="ops-pop rounded-ui-xl border border-semantic-accent/20 bg-semantic-accent-soft/40 p-4 transition-shadow hover:shadow-ui-sm"
-                      style={{ animationDelay: `${index * 60}ms` }}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold text-semantic-text">{item.document.title}</h3>
-                        <Badge variant="ai">{Math.round(item.relevance_score * 100)}% match</Badge>
-                      </div>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-semantic-text-muted">{item.content}</p>
-                    </article>
-                  ))}
+                  <article className="ops-pop rounded-ui-xl border border-semantic-accent/20 bg-semantic-accent-soft/40 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-semantic-text">Answer</h3>
+                      {knowledgeAnswer.degraded && <Badge variant="warning">Limited synthesis</Badge>}
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-semantic-text">
+                      {knowledgeAnswer.answer}
+                    </p>
+                  </article>
+                  {knowledgeAnswer.citations.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-semantic-text-muted">Sources</p>
+                      {knowledgeAnswer.citations.map((citation) => (
+                        <div
+                          key={citation.chunk_id}
+                          className="rounded-ui-xl border border-semantic-border bg-semantic-surface p-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-semibold text-semantic-text">{citation.document_title}</p>
+                            <Badge variant="ai">{Math.round(citation.relevance_score * 100)}% match</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
-              {!searching && semanticQuery && knowledge.length === 0 && (
+              {!searching && askedQuery && knowledgeAnswer?.answer === 'not found in documents' && (
                 <Alert variant="info" title="No close matches found">Try another phrase.</Alert>
               )}
             </CardContent>
@@ -3597,8 +3631,8 @@ export function WorkflowsPage() {
       ]);
       setRuns(runRows);
       setLeads(leadRows);
-      const firstOpenLead = leadRows.find((lead) => lead.status === 'open')?.id || '';
-      setLeadId((current) => current || firstOpenLead);
+      const firstQuoteableLead = leadRows.find((lead) => (lead.status || 'open').toLowerCase() !== 'lost')?.id || '';
+      setLeadId((current) => current || firstQuoteableLead);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to load workflows');
     } finally {
@@ -3793,9 +3827,11 @@ export function WorkflowsPage() {
                       value={leadId}
                       onChange={(e) => setLeadId(e.target.value)}
                     >
-                      <option value="">Choose an open lead</option>
-                      {leads.filter((lead) => lead.status === 'open').map((lead) => (
-                        <option key={lead.id} value={lead.id}>{lead.title}</option>
+                      <option value="">Choose a lead</option>
+                      {leads.filter((lead) => (lead.status || 'open').toLowerCase() !== 'lost').map((lead) => (
+                        <option key={lead.id} value={lead.id}>
+                          {lead.title}{lead.status && lead.status !== 'open' ? ` · ${lead.status}` : ''}
+                        </option>
                       ))}
                     </select>
                   </label>
@@ -4179,7 +4215,7 @@ export function ApprovalsPage() {
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <h3 className="font-semibold text-semantic-text">{item.quote_preview.title || 'Quote draft'}</h3>
                             <span className="font-bold tabular-nums text-semantic-text">
-                              {formatCurrency(item.quote_preview.total_cents || 0, item.quote_preview.currency || 'USD')}
+                              {formatCurrency(quotePreviewTotalCents(item.quote_preview), item.quote_preview.currency || 'USD')}
                             </span>
                           </div>
                           <ul className="mt-3 divide-y divide-semantic-border">

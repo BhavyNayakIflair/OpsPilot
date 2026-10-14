@@ -50,6 +50,9 @@ class Lead(Base, TimestampMixin):
     currency = Column(String(3), default="USD", nullable=False)
     notes = Column(Text)
 
+    def is_lost(self) -> bool:
+        return (self.status or "").strip().lower() == "lost"
+
 
 class Activity(Base, TimestampMixin):
     __tablename__ = "activities"

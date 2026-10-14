@@ -108,3 +108,31 @@ async def test_ai_quote_draft_computes_total_with_decimal_when_model_total_diffe
     # Correct code computed 3 * 15000 = 45000 with Decimal, ignoring model 999999
     assert result["quote"]["total_cents"] == 45000
 
+
+@pytest.mark.asyncio
+async def test_ai_quote_draft_allows_won_leads_but_rejects_lost(async_client: AsyncClient):
+    headers, card, lead = await _setup_lead_and_card(async_client, "closed_status")
+    app.dependency_overrides[get_llm_provider] = lambda: FakeProvider()
+    stages = await async_client.get("/api/v1/crm/stages", headers=headers)
+    won_stage = next(stage for stage in stages.json() if stage["is_won"])
+    lost_stage = next(stage for stage in stages.json() if stage["is_lost"])
+
+    won = await async_client.patch(
+        f"/api/v1/crm/leads/{lead['id']}", headers=headers, json={"stage_id": won_stage["id"]}
+    )
+    assert won.status_code == 200 and won.json()["status"] == "won"
+    won_draft = await async_client.post("/api/v1/quotes/draft", headers=headers, json={
+        "lead_id": lead["id"], "rate_card_id": card["id"],
+    })
+    assert won_draft.status_code == 201, won_draft.text
+
+    lost_lead = await async_client.post("/api/v1/crm/leads", headers=headers, json={
+        "title": "Cancelled engagement", "currency": "USD", "stage_id": lost_stage["id"],
+    })
+    assert lost_lead.status_code == 201 and lost_lead.json()["status"] == "lost"
+    lost_draft = await async_client.post("/api/v1/quotes/draft", headers=headers, json={
+        "lead_id": lost_lead.json()["id"], "rate_card_id": card["id"],
+    })
+    assert lost_draft.status_code == 409
+    assert "lost" in lost_draft.json()["detail"].lower()
+

@@ -272,6 +272,7 @@ export function CRM() {
       company_id: leadCompany || null,
       value_cents: Math.round(Number(leadValue || 0) * 100),
     };
+    const intakeStage = stages.find((s) => !s.is_won && !s.is_lost);
     try {
       const isEditing = Boolean(editingLead);
       await apiRequest(
@@ -283,7 +284,7 @@ export function CRM() {
               ? payload
               : {
                   ...payload,
-                  stage_id: stages[0]?.id || null,
+                  ...(intakeStage ? { stage_id: intakeStage.id } : {}),
                   currency: 'USD',
                 }
           ),
