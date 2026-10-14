@@ -5,7 +5,7 @@ import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/toast';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Sparkles, CheckCircle2, Inbox, Loader2, ChevronDown, Target, Activity, Receipt, ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2 } from 'lucide-react';
+import { Search, Sparkles, CheckCircle2, Inbox, Loader2, ChevronDown, Target, Activity, Receipt, ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, CalendarDays, Check, CircleCheck, CircleX, Clock3, ReceiptText, RefreshCw, X, AlarmClock, WalletCards, FileText, Plus, CircleDollarSign, Send, Ban } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Badge } from '../components/ui/Badge';
@@ -1929,7 +1929,7 @@ export function InvoicingPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [client, setClient] = useState('');
-  const [projectId, setProjectId] = useState<string>('');
+  const [projectId, setProjectId] = useState('');
   const [lineItems, setLineItems] = useState([{ description: '', quantity: '1', price: '' }]);
   const [tax, setTax] = useState('0');
   const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
@@ -1937,15 +1937,18 @@ export function InvoicingPage() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [sort, setSort] = useState('due-asc');
   const editor = useEditorScroll();
 
-  const [search, setSearch] = useState('');
-  const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({
-    status: 'all',
-    overdue: '',
-  });
-  const [sortKey, setSortKey] = useState<string | null>('due_date');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const today = new Date().toISOString().slice(0, 10);
+  const isOverdue = (inv: Invoice) =>
+    inv.total_cents > inv.paid_cents &&
+    inv.due_date < today &&
+    (inv.status === 'draft' || inv.status === 'sent');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1966,26 +1969,55 @@ export function InvoicingPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const isOverdue = (inv: Invoice) => {
-    const balance = inv.total_cents - inv.paid_cents;
-    return balance > 0 && inv.due_date < today && (inv.status === 'draft' || inv.status === 'sent');
+  const resetForm = () => {
+    setClient('');
+    setProjectId('');
+    setLineItems([{ description: '', quantity: '1', price: '' }]);
+    setTax('0');
+    setIssueDate(new Date().toISOString().slice(0, 10));
+    setDueDate('');
+    setEditing(null);
   };
 
-  const create = async (e: FormEvent) => {
+  const subtotal = lineItems.reduce((sum, item) => {
+    const q = Number(item.quantity);
+    const p = Number(item.price);
+    return sum + (Number.isFinite(q) && Number.isFinite(p) ? Math.max(0, q) * Math.max(0, p) * 100 : 0);
+  }, 0);
+  const taxCents = Math.round(subtotal * Math.max(0, Number(tax) || 0) / 100);
+  const total = Math.round(subtotal) + taxCents;
+
+  const saveInvoice = async (e: FormEvent) => {
     e.preventDefault();
+    if (dueDate < issueDate) {
+      toast.error('Due date cannot be earlier than the issue date.');
+      return;
+    }
+    if (!lineItems.length || lineItems.some((item) =>
+      !item.description.trim() || !Number.isFinite(Number(item.quantity)) ||
+      Number(item.quantity) <= 0 || !Number.isFinite(Number(item.price)) || Number(item.price) < 0
+    )) {
+      toast.error('Enter a description, positive quantity, and valid price for every line item.');
+      return;
+    }
+    if (!Number.isFinite(Number(tax)) || Number(tax) < 0 || Number(tax) > 100) {
+      toast.error('Tax rate must be between 0 and 100%.');
+      return;
+    }
+
+    setSaving(true);
+    const wasEditing = Boolean(editing);
     try {
-      const isEditing = Boolean(editing);
       const payload: Record<string, unknown> = {
-        client_name: client,
+        client_name: client.trim(),
         currency: editing?.currency || 'USD',
         issue_date: issueDate,
         due_date: dueDate,
         tax_bps: Math.round(Number(tax) * 100),
-        line_items: lineItems.map((line) => ({
-          description: line.description,
-          quantity: Number(line.quantity),
-          unit_price_cents: Math.round(Number(line.price) * 100),
+        line_items: lineItems.map((item) => ({
+          description: item.description.trim(),
+          quantity: Number(item.quantity),
+          unit_price_cents: Math.round(Number(item.price) * 100),
         })),
       };
       if (projectId) payload.project_id = projectId;
@@ -1993,11 +2025,13 @@ export function InvoicingPage() {
         method: editing ? 'PUT' : 'POST',
         body: JSON.stringify(payload),
       });
-      setClient(''); setProjectId(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTax('0'); setEditing(null);
+      resetForm();
       await load();
-      toast.success(isEditing ? 'Invoice updated.' : 'Invoice created.');
+      toast.success(wasEditing ? 'Invoice updated.' : 'Invoice created.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to save invoice');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -2007,7 +2041,11 @@ export function InvoicingPage() {
     try {
       await apiRequest(`/billing/invoices/${invoice.id}/payments`, {
         method: 'POST',
-        body: JSON.stringify({ amount_cents: remaining, paid_date: new Date().toISOString().slice(0, 10), method: 'other' }),
+        body: JSON.stringify({
+          amount_cents: remaining,
+          paid_date: new Date().toISOString().slice(0, 10),
+          method: 'other',
+        }),
       });
       await load();
       toast.success('Payment recorded.');
@@ -2018,7 +2056,9 @@ export function InvoicingPage() {
 
   const send = async (invoice: Invoice) => {
     try {
-      await apiRequest(`/billing/invoices/${invoice.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'sent' }) });
+      await apiRequest(`/billing/invoices/${invoice.id}/status`, {
+        method: 'PATCH', body: JSON.stringify({ status: 'sent' }),
+      });
       await load();
       toast.success('Invoice marked as sent.');
     } catch (err) {
@@ -2026,9 +2066,12 @@ export function InvoicingPage() {
     }
   };
 
-  const voidInv = async (invoice: Invoice) => {
+  const voidInvoice = async (invoice: Invoice) => {
+    if (!window.confirm(`Void invoice ${invoice.invoice_number}?`)) return;
     try {
-      await apiRequest(`/billing/invoices/${invoice.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'void' }) });
+      await apiRequest(`/billing/invoices/${invoice.id}/status`, {
+        method: 'PATCH', body: JSON.stringify({ status: 'void' }),
+      });
       await load();
       toast.success('Invoice voided.');
     } catch (err) {
@@ -2043,10 +2086,10 @@ export function InvoicingPage() {
     setIssueDate(invoice.issue_date);
     setDueDate(invoice.due_date);
     setTax(invoice.subtotal_cents ? ((invoice.tax_cents * 100) / invoice.subtotal_cents).toFixed(2) : '0');
-    setLineItems(invoice.line_items.map((line) => ({
-      description: line.description,
-      quantity: String(line.quantity),
-      price: (line.unit_price_cents / 100).toFixed(2),
+    setLineItems(invoice.line_items.map((item) => ({
+      description: item.description,
+      quantity: String(item.quantity),
+      price: (item.unit_price_cents / 100).toFixed(2),
     })));
     editor.focusEditor();
   };
@@ -2057,260 +2100,321 @@ export function InvoicingPage() {
       await apiRequest(`/billing/invoices/${invoice.id}`, { method: 'DELETE' });
       await load();
       toast.success('Invoice deleted.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Unable to delete invoice');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to delete invoice');
     }
   };
 
-  const projectName = (id?: string | null) => projects.find((p) => p.id === id)?.name || '—';
-
+  const projectName = (id?: string | null) => projects.find((p) => p.id === id)?.name || 'No project';
   const filteredInvoices = useMemo(() => {
-    let list = [...invoices];
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter((r) => r.invoice_number.toLowerCase().includes(q) || r.client_name.toLowerCase().includes(q));
-    }
-    const st = filterValues.status as string;
-    if (st && st !== 'all') list = list.filter((r) => r.status === st);
-    const ov = filterValues.overdue as string;
-    if (ov === 'overdue') list = list.filter(isOverdue);
-    if (sortKey) {
-      list.sort((a, b) => {
-        let cmp = 0;
-        if (sortKey === 'due_date') cmp = a.due_date.localeCompare(b.due_date);
-        else if (sortKey === 'total') cmp = a.total_cents - b.total_cents;
-        return sortDir === 'desc' ? -cmp : cmp;
-      });
-    }
+    let list = invoices.filter((inv) => {
+      const q = search.trim().toLowerCase();
+      const matchesSearch = !q ||
+        inv.invoice_number.toLowerCase().includes(q) ||
+        inv.client_name.toLowerCase().includes(q) ||
+        (inv.notes || '').toLowerCase().includes(q) ||
+        projectName(inv.project_id).toLowerCase().includes(q);
+      return matchesSearch &&
+        (statusFilter === 'all' || inv.status === statusFilter) &&
+        (!overdueOnly || isOverdue(inv));
+    });
+    list = [...list];
+    list.sort((a, b) => {
+      if (sort === 'due-desc') return b.due_date.localeCompare(a.due_date);
+      if (sort === 'amount-desc') return b.total_cents - a.total_cents;
+      if (sort === 'amount-asc') return a.total_cents - b.total_cents;
+      if (sort === 'client') return a.client_name.localeCompare(b.client_name);
+      return a.due_date.localeCompare(b.due_date);
+    });
     return list;
-  }, [invoices, search, filterValues, sortKey, sortDir]);
+  }, [invoices, search, statusFilter, overdueOnly, sort, projects]);
 
-  const toggleSort = (key: string) => {
-    if (sortKey === key) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-    else { setSortKey(key); setSortDir('asc'); }
-  };
-
-  const onFilterChange = (key: string, value: string | string[]) => {
-    setFilterValues((old) => ({ ...old, [key]: value }));
-  };
-
-  const filters: DataTableFilterDef[] = [
-    {
-      key: 'status',
-      label: 'Status',
-      type: 'dropdown',
-      options: [
-        { value: 'all', label: 'All' },
-        { value: 'draft', label: 'Draft' },
-        { value: 'sent', label: 'Sent' },
-        { value: 'paid', label: 'Paid' },
-        { value: 'void', label: 'Void' },
-      ],
-    },
-    {
-      key: 'overdue',
-      label: 'Flags',
-      type: 'chips',
-      options: [{ value: 'overdue', label: 'Overdue' }],
-    },
-  ];
-
-  const columns: DataTableColumn<Invoice>[] = [
-    {
-      key: 'invoice_number',
-      header: 'Invoice',
-      render: (r) => (
-        <div className="min-w-0">
-          <span className="font-bold text-semantic-text">{r.invoice_number}</span>
-          {r.notes && (
-            <div className="mt-0.5 max-w-[220px] truncate text-xs font-normal text-semantic-text-muted" title={r.notes}>
-              {r.notes}
-            </div>
-          )}
-        </div>
-      ),
-    },
-    { key: 'client_name', header: 'Client', accessor: (r) => r.client_name },
-    {
-      key: 'project_id',
-      header: 'Project',
-      render: (r) => projectName(r.project_id),
-    },
-    { key: 'issue_date', header: 'Issue Date', accessor: (r) => r.issue_date },
-    {
-      key: 'due_date',
-      header: 'Due Date',
-      sortable: true,
-      render: (r) => (
-        <span className="inline-flex items-center gap-2 flex-wrap">
-          <span>{r.due_date}</span>
-          {isOverdue(r) && <Badge variant="danger">OVERDUE</Badge>}
-        </span>
-      ),
-    },
-    {
-      key: 'total_cents',
-      header: 'Total',
-      align: 'right',
-      sortable: false,
-      accessor: (r) => formatCurrency(r.total_cents, r.currency),
-    },
-    {
-      key: 'balance',
-      header: 'Balance',
-      align: 'right',
-      accessor: (r) => formatCurrency(r.total_cents - r.paid_cents, r.currency),
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      widthClass: 'w-[100px]',
-      render: (r) => {
-        const v: 'success' | 'warning' | 'danger' | 'muted' =
-          r.status === 'paid' ? 'success' :
-          r.status === 'sent' ? 'warning' :
-          r.status === 'void' ? 'danger' :
-          'muted';
-        return <Badge variant={v}>{r.status}</Badge>;
-      },
-    },
-    {
-      key: 'actions',
-      header: 'Actions',
-      align: 'right',
-      widthClass: 'w-[320px]',
-      render: (inv) => (
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
-          {inv.status === 'draft' && (
-            <>
-              <Button variant="secondary" size="sm" onClick={() => edit(inv)}>Edit</Button>
-              <Button variant="primary" size="sm" className="bg-sky-600 hover:bg-sky-700 min-h-[32px] px-3 py-1" onClick={() => void send(inv)}>Mark sent</Button>
-              <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(inv)}>Delete</Button>
-            </>
-          )}
-          {inv.status !== 'paid' && inv.status !== 'void' && (
-            <Button variant="primary" size="sm" className="bg-semantic-success hover:bg-emerald-700 min-h-[32px] px-3 py-1" onClick={() => void pay(inv)}>Record payment</Button>
-          )}
-          {inv.status === 'sent' && (
-            <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void voidInv(inv)}>Void</Button>
-          )}
-        </div>
-      ),
-    },
-  ];
+  const outstanding = invoices.filter((inv) => inv.status !== 'void')
+    .reduce((sum, inv) => sum + Math.max(0, inv.total_cents - inv.paid_cents), 0);
+  const overdueCount = invoices.filter(isOverdue).length;
+  const paidCount = invoices.filter((inv) => inv.status === 'paid').length;
+  const draftCount = invoices.filter((inv) => inv.status === 'draft').length;
+  const tone = (status: string): 'success' | 'warning' | 'danger' | 'muted' =>
+    status === 'paid' ? 'success' : status === 'sent' ? 'warning' : status === 'void' ? 'danger' : 'muted';
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="page-shell min-w-0 space-y-6 overflow-x-clip">
       <OpsStyles />
       <PageHeader
-        eyebrow="Finance"
+        eyebrow="Finance workspace"
         title="Invoices & Payments"
-        description="Create invoices, record incoming payments and track outstanding balances."
+        description="Create client invoices, record payments, and monitor outstanding balances."
       />
-      {error && <Alert variant="danger" title="Error">{error}</Alert>}
+      {error && (
+        <Alert variant="danger" title="Unable to load invoices">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{error}</span>
+            <Button variant="secondary" size="sm" onClick={() => void load()}>Try again</Button>
+          </div>
+        </Alert>
+      )}
 
-      <div ref={editor.ref} className={editor.className}>
-        <Card className="relative overflow-hidden">
+      <section className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: 'Outstanding balance', value: formatCurrency(outstanding, 'USD'), hint: 'Across non-void invoices', icon: WalletCards, style: 'bg-sky-500/10 text-sky-600' },
+          { label: 'Overdue invoices', value: String(overdueCount), hint: 'Past due with balance remaining', icon: AlarmClock, style: 'bg-rose-500/10 text-rose-600' },
+          { label: 'Paid invoices', value: String(paidCount), hint: 'Successfully settled', icon: CircleCheck, style: 'bg-emerald-500/10 text-emerald-600' },
+          { label: 'Draft invoices', value: String(draftCount), hint: 'Ready to review or send', icon: FileText, style: 'bg-violet-500/10 text-violet-600' },
+        ].map((stat) => (
+          <Card key={stat.label} className="min-w-0">
+            <CardContent>
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-semantic-text-muted">{stat.label}</p>
+                  <p className="mt-2 break-words text-2xl font-bold tracking-tight text-semantic-text">{stat.value}</p>
+                  <p className="mt-1 text-xs text-semantic-text-muted">{stat.hint}</p>
+                </div>
+                <span className={`shrink-0 rounded-xl p-2.5 ${stat.style}`}><stat.icon size={20} /></span>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
+      <div ref={editor.ref} className={`${editor.className} min-w-0 scroll-mt-6`}>
+        <Card className="relative min-w-0 overflow-hidden">
           <FormAccent />
           <CardHeader>
-            <div>
-              <h2 className="font-semibold text-semantic-text">{editing ? 'Update invoice' : 'Create draft invoice'}</h2>
-              <p className="text-xs text-semantic-text-muted mt-0.5">Add line items and set a due date. Drafts can be edited or deleted.</p>
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="rounded-xl bg-semantic-accent/10 p-2.5 text-semantic-accent"><ReceiptText size={20} /></span>
+              <div className="min-w-0">
+                <h2 className="font-semibold text-semantic-text">{editing ? 'Edit invoice' : 'Create an invoice'}</h2>
+                <p className="mt-1 text-sm text-semantic-text-muted">
+                  {editing ? `Update ${editing.invoice_number}.` : 'Enter billing details and line items to prepare a draft.'}
+                </p>
+              </div>
             </div>
-            {editing && <Badge variant="warning">Editing</Badge>}
+            {editing && <Badge variant="warning">Editing draft</Badge>}
           </CardHeader>
           <CardContent>
-            <form onSubmit={(e) => void create(e)} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Client name
-                <input className={`${fieldControl} mt-1.5`} required placeholder="Customer or company" value={client} onChange={(e) => setClient(e.target.value)} />
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Project (optional)
-                <select className={`${fieldControl} mt-1.5`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                  <option value="">No project</option>
-                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </label>
-              <label className="text-xs font-semibold text-semantic-text-muted">
-                Issue date
-                <input className={`${fieldControl} mt-1.5`} type="date" required value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="text-xs font-semibold text-semantic-text-muted">
-                  Due date
-                  <input className={`${fieldControl} mt-1.5`} type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            <form onSubmit={(e) => void saveInvoice(e)} className="min-w-0 space-y-6">
+              <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
+                  Client name *
+                  <input className={`${fieldControl} mt-1.5 w-full min-w-0`} required maxLength={160} placeholder="Customer or company" value={client} onChange={(e) => setClient(e.target.value)} />
                 </label>
-                <label className="text-xs font-semibold text-semantic-text-muted">
-                  Tax rate (%)
-                  <input className={`${fieldControl} mt-1.5`} type="number" min="0" max="100" step="0.01" placeholder="0" value={tax} onChange={(e) => setTax(e.target.value)} />
+                <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
+                  Project <span className="font-normal">(optional)</span>
+                  <select className={`${fieldControl} mt-1.5 w-full min-w-0`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                    <option value="">No project linked</option>
+                    {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+                <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
+                  Issue date
+                  <input className={`${fieldControl} mt-1.5 w-full min-w-0`} type="date" required value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
+                </label>
+                <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
+                  Due date
+                  <input className={`${fieldControl} mt-1.5 w-full min-w-0`} type="date" required min={issueDate} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
                 </label>
               </div>
 
-              <div className="space-y-3 sm:col-span-2 lg:col-span-4">
-                <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted">Invoice line items</h3>
-                {lineItems.map((line, index) => (
-                  <div key={index} className="ops-pop grid items-end gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface-muted/50 p-3 transition-all duration-200 hover:border-semantic-accent/40 focus-within:border-semantic-accent/50 focus-within:shadow-ui-sm sm:grid-cols-[2fr_120px_1fr_auto]">
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Description
-                      <input className={`${fieldControl} mt-1.5`} required placeholder="Service or product" value={line.description} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, description: e.target.value } : item))} />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Quantity
-                      <input className={`${fieldControl} mt-1.5`} required type="number" min="1" value={line.quantity} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
-                    </label>
-                    <label className="text-xs font-semibold text-semantic-text-muted">
-                      Unit price (USD)
-                      <input className={`${fieldControl} mt-1.5`} required type="number" min="0" step="0.01" placeholder="0.00" value={line.price} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, price: e.target.value } : item))} />
-                    </label>
-                    {lineItems.length > 1 && (
-                      <Button type="button" variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => setLineItems((old) => old.filter((_, i) => i !== index))}>
-                        Remove
-                      </Button>
-                    )}
+              <div className="min-w-0 rounded-2xl border border-semantic-border bg-semantic-surface-muted/30 p-3 sm:p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-semantic-text">Invoice line items</h3>
+                    <p className="mt-1 text-xs text-semantic-text-muted">Describe each product or service being billed.</p>
                   </div>
-                ))}
-                <Button type="button" variant="ghost" size="sm" onClick={() => setLineItems((old) => [...old, { description: '', quantity: '1', price: '' }])}>
-                  + Add line item
+                  <Badge variant="muted">{lineItems.length} {lineItems.length === 1 ? 'item' : 'items'}</Badge>
+                </div>
+                <div className="min-w-0 space-y-3">
+                  {lineItems.map((line, index) => {
+                    const amount = Math.round(Math.max(0, Number(line.quantity) || 0) * Math.max(0, Number(line.price) || 0) * 100);
+                    return (
+                      <div key={index} className="min-w-0 rounded-xl border border-semantic-border bg-semantic-surface p-3 sm:p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <span className="text-xs font-bold uppercase tracking-wide text-semantic-text-muted">Item {String(index + 1).padStart(2, '0')}</span>
+                          {lineItems.length > 1 && (
+                            <Button type="button" variant="ghost" size="sm" className="min-h-8 px-2 text-semantic-danger" onClick={() => setLineItems((old) => old.filter((_, i) => i !== index))}>
+                              <Trash2 size={14} /> Remove
+                            </Button>
+                          )}
+                        </div>
+                        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_minmax(90px,0.7fr)_minmax(130px,1fr)_minmax(115px,0.8fr)]">
+                          <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
+                            Description
+                            <input className={`${fieldControl} mt-1.5 w-full min-w-0`} required maxLength={240} placeholder="e.g. Backend development" value={line.description} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, description: e.target.value } : item))} />
+                          </label>
+                          <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
+                            Quantity
+                            <input className={`${fieldControl} mt-1.5 w-full min-w-0`} required type="number" min="0.01" step="any" value={line.quantity} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
+                          </label>
+                          <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
+                            Unit price (USD)
+                            <input className={`${fieldControl} mt-1.5 w-full min-w-0`} required type="number" min="0" step="0.01" placeholder="0.00" value={line.price} onChange={(e) => setLineItems((old) => old.map((item, i) => i === index ? { ...item, price: e.target.value } : item))} />
+                          </label>
+                          <div className="flex min-w-0 flex-col justify-center rounded-lg bg-semantic-surface-muted/70 px-3 py-2">
+                            <span className="text-[11px] text-semantic-text-muted">Line total</span>
+                            <span className="mt-1 break-words text-base font-semibold tabular-nums text-semantic-text">{formatCurrency(amount, editing?.currency || 'USD')}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={() => setLineItems((old) => [...old, { description: '', quantity: '1', price: '' }])}>
+                  <Plus size={15} /> Add line item
                 </Button>
               </div>
 
-              <div className="flex flex-wrap justify-end gap-2 border-t border-semantic-border pt-4 sm:col-span-2 lg:col-span-4">
-                {editing && (
-                  <Button type="button" variant="secondary" onClick={() => {
-                    setEditing(null); setClient(''); setProjectId(''); setLineItems([{ description: '', quantity: '1', price: '' }]); setTax('0');
-                  }}>Cancel</Button>
-                )}
-                <Button type="submit">{editing ? 'Save invoice changes' : 'Create draft invoice'}</Button>
+              <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.75fr)]">
+                <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
+                  Tax rate (%)
+                  <input className={`${fieldControl} mt-1.5 w-full max-w-xs`} type="number" min="0" max="100" step="0.01" value={tax} onChange={(e) => setTax(e.target.value)} />
+                  <span className="mt-1.5 block font-normal">Calculated against the line-item subtotal.</span>
+                </label>
+                <div className="min-w-0 rounded-2xl border border-semantic-border bg-semantic-surface-muted/40 p-4">
+                  <div className="flex items-center justify-between gap-4 text-sm">
+                    <span className="text-semantic-text-muted">Subtotal</span>
+                    <span className="font-medium tabular-nums text-semantic-text">{formatCurrency(Math.round(subtotal), editing?.currency || 'USD')}</span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-4 text-sm">
+                    <span className="text-semantic-text-muted">Tax ({Number(tax) || 0}%)</span>
+                    <span className="font-medium tabular-nums text-semantic-text">{formatCurrency(taxCents, editing?.currency || 'USD')}</span>
+                  </div>
+                  <div className="my-4 border-t border-semantic-border" />
+                  <div className="flex items-end justify-between gap-4">
+                    <span className="text-sm font-semibold text-semantic-text">Estimated total</span>
+                    <span className="break-words text-right text-2xl font-bold tracking-tight tabular-nums text-semantic-text">{formatCurrency(total, editing?.currency || 'USD')}</span>
+                  </div>
+                  <p className="mt-2 text-xs text-semantic-text-muted">Final totals are calculated by the server.</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col-reverse gap-2 border-t border-semantic-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-semantic-text-muted">Currency: {editing?.currency || 'USD'}</p>
+                <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                  {editing && <Button type="button" variant="secondary" onClick={resetForm}>Cancel edit</Button>}
+                  <Button type="submit" disabled={saving} loading={saving}>{saving ? 'Saving…' : editing ? 'Save invoice changes' : 'Create draft invoice'}</Button>
+                </div>
               </div>
             </form>
           </CardContent>
         </Card>
       </div>
 
-      <div className="ops-rise" style={{ animationDelay: '80ms' }}>
-        <DataTable<Invoice>
-          columns={columns}
-          rows={filteredInvoices}
-          rowKey={(r) => r.id}
-          searchable
-          searchPlaceholder="Search invoice # or client..."
-          searchValue={search}
-          onSearchChange={setSearch}
-          filters={filters}
-          filterValues={filterValues}
-          onFilterChange={onFilterChange}
-          sortable
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSortChange={toggleSort}
-          loading={loading}
-          emptyState={<EmptyState icon={Inbox} title="No invoices yet" description="Create your first draft invoice above." />}
-        />
-      </div>
+      <section className="min-w-0 space-y-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-semantic-text">Invoice register</h2>
+            <p className="mt-1 text-sm text-semantic-text-muted">A compact, responsive view of your invoices.</p>
+          </div>
+          <p className="text-sm text-semantic-text-muted">{filteredInvoices.length} of {invoices.length} invoices</p>
+        </div>
+
+        <Card className="min-w-0">
+          <CardContent>
+            <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_170px] xl:grid-cols-[minmax(0,1fr)_170px_auto_190px]">
+              <label className="relative block min-w-0">
+                <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-semantic-text-muted" />
+                <input className={`${fieldControl} w-full min-w-0 pl-9`} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search invoice, client, project…" aria-label="Search invoices" />
+              </label>
+              <select className={`${fieldControl} w-full min-w-0`} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by status">
+                <option value="all">All statuses</option>
+                <option value="draft">Draft</option>
+                <option value="sent">Sent</option>
+                <option value="paid">Paid</option>
+                <option value="void">Void</option>
+              </select>
+              <Button type="button" variant={overdueOnly ? 'primary' : 'secondary'} onClick={() => setOverdueOnly((value) => !value)}>
+                <AlarmClock size={15} /> {overdueOnly ? 'Show all invoices' : 'Overdue only'}
+              </Button>
+              <select className={`${fieldControl} w-full min-w-0`} value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort invoices">
+                <option value="due-asc">Due date: earliest</option>
+                <option value="due-desc">Due date: latest</option>
+                <option value="amount-desc">Amount: high to low</option>
+                <option value="amount-asc">Amount: low to high</option>
+                <option value="client">Client: A to Z</option>
+              </select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {loading ? (
+          <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+            {[0, 1, 2, 3].map((n) => <Card key={n} className="min-w-0 animate-pulse"><CardContent><div className="h-4 w-1/3 rounded bg-semantic-surface-muted" /><div className="mt-4 h-6 w-1/2 rounded bg-semantic-surface-muted" /><div className="mt-5 h-16 rounded bg-semantic-surface-muted" /></CardContent></Card>)}
+          </div>
+        ) : filteredInvoices.length === 0 ? (
+          <Card>
+            <CardContent>
+              <EmptyState icon={Inbox} title={invoices.length ? 'No matching invoices' : 'No invoices yet'} description={invoices.length ? 'Try changing your search or filters.' : 'Create your first draft invoice above to start tracking billing.'} />
+              {invoices.length > 0 && <div className="mt-3 flex justify-center"><Button variant="secondary" size="sm" onClick={() => { setSearch(''); setStatusFilter('all'); setOverdueOnly(false); }}>Clear filters</Button></div>}
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
+            {filteredInvoices.map((inv) => {
+              const balance = Math.max(0, inv.total_cents - inv.paid_cents);
+              const progress = inv.total_cents > 0 ? Math.min(100, Math.max(0, inv.paid_cents / inv.total_cents * 100)) : 0;
+              const overdue = isOverdue(inv);
+              return (
+                <Card key={inv.id} className={`min-w-0 overflow-hidden transition-shadow hover:shadow-ui-md ${overdue ? 'border-rose-500/40' : ''}`}>
+                  <CardContent>
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className="shrink-0 rounded-xl bg-semantic-accent/10 p-2.5 text-semantic-accent"><FileText size={19} /></span>
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-bold text-semantic-text">{inv.invoice_number}</p>
+                          <p className="mt-1 break-words text-sm text-semantic-text-muted">{inv.client_name}</p>
+                          <p className="mt-1 truncate text-xs text-semantic-text-muted" title={projectName(inv.project_id)}>{projectName(inv.project_id)}</p>
+                        </div>
+                      </div>
+                      <div className="flex max-w-[45%] shrink-0 flex-col items-end gap-2">
+                        <Badge variant={tone(inv.status)}>{inv.status}</Badge>
+                        {overdue && <Badge variant="danger">Overdue</Badge>}
+                      </div>
+                    </div>
+
+                    {inv.notes && <p className="mt-3 line-clamp-2 break-words text-xs text-semantic-text-muted" title={inv.notes}>{inv.notes}</p>}
+
+                    <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-semantic-surface-muted/40 p-3">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-medium text-semantic-text-muted">Invoice total</p>
+                        <p className="mt-1 break-words text-lg font-bold tabular-nums text-semantic-text">{formatCurrency(inv.total_cents, inv.currency)}</p>
+                      </div>
+                      <div className="min-w-0 text-right">
+                        <p className="text-[11px] font-medium text-semantic-text-muted">Balance due</p>
+                        <p className={`mt-1 break-words text-lg font-bold tabular-nums ${balance > 0 ? 'text-semantic-text' : 'text-emerald-600'}`}>{formatCurrency(balance, inv.currency)}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-semantic-text-muted"><span>Payment progress</span><span>{Math.round(progress)}% paid</span></div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-semantic-border"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${progress}%` }} /></div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <div className="flex min-w-0 items-start gap-2"><CalendarDays size={15} className="mt-0.5 shrink-0 text-semantic-text-muted" /><div className="min-w-0"><p className="text-[11px] text-semantic-text-muted">Issue date</p><p className="break-words text-xs font-medium text-semantic-text">{inv.issue_date}</p></div></div>
+                      <div className="flex min-w-0 items-start gap-2"><Clock3 size={15} className={`mt-0.5 shrink-0 ${overdue ? 'text-rose-600' : 'text-semantic-text-muted'}`} /><div className="min-w-0"><p className="text-[11px] text-semantic-text-muted">Due date</p><p className={`break-words text-xs font-medium ${overdue ? 'text-rose-600' : 'text-semantic-text'}`}>{inv.due_date}</p></div></div>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-semantic-border pt-3">
+                      {inv.status === 'draft' && <>
+                        <Button variant="secondary" size="sm" onClick={() => edit(inv)}><Pencil size={14} /> Edit</Button>
+                        <Button variant="primary" size="sm" onClick={() => void send(inv)}><Send size={14} /> Mark sent</Button>
+                        <Button variant="ghost" size="sm" className="text-semantic-danger" onClick={() => void remove(inv)}><Trash2 size={14} /> Delete</Button>
+                      </>}
+                      {inv.status !== 'paid' && inv.status !== 'void' && balance > 0 && <Button variant="primary" size="sm" className="sm:ml-auto" onClick={() => void pay(inv)}><CircleDollarSign size={14} /> Record payment</Button>}
+                      {inv.status === 'sent' && <Button variant="ghost" size="sm" className="text-semantic-danger" onClick={() => void voidInvoice(inv)}><Ban size={14} /> Void invoice</Button>}
+                      {inv.status === 'paid' && <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-emerald-600"><CircleCheck size={14} /> Fully paid</span>}
+                      {inv.status === 'void' && <span className="ml-auto text-xs text-semantic-text-muted">Invoice voided</span>}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Expenses                                                            */

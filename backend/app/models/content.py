@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import Column, String, ForeignKey, Text, JSON, Index, Integer, Float
+from sqlalchemy import Column, String, ForeignKey, Text, JSON, Index, Integer, Float, UniqueConstraint
 from sqlalchemy.types import TypeDecorator
 from app.core.database import Base
 from app.models.base import TimestampMixin, generate_uuid
@@ -46,7 +46,7 @@ class VectorEmbedding(TypeDecorator):
 
 class DocumentChunk(Base, TimestampMixin):
     __tablename__ = "document_chunks"
-    __table_args__ = (Index("ix_document_chunks_org_document", "org_id", "document_id"),)
+    __table_args__ = (Index("ix_document_chunks_org_document", "org_id", "document_id"), UniqueConstraint('document_id', 'chunk_index', name='uq_doc_chunk'))
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     document_id = Column(String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True)

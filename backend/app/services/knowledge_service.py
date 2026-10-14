@@ -54,6 +54,10 @@ async def ingest_document(db: AsyncSession, document: KnowledgeDocument, provide
     chunks = chunk_text(document.content)
     if not chunks:
         return 0
+    # Delete any existing chunks for this document to ensure idempotent ingestion
+    await db.execute(text("""
+        DELETE FROM document_chunks WHERE document_id = :document_id
+    """), {"document_id": document.id})
     vectors: list[list[float]] = []
     # Keep individual embed requests bounded for CPU-only local inference.
     for offset in range(0, len(chunks), 32):
