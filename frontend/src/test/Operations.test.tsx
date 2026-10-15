@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { apiRequest } from '../lib/api';
-import { ApprovalsPage, ProjectsPage, TimesheetsPage, PeoplePage, DocumentsPage } from '../pages/Operations';
+import { ApprovalsPage, ProjectsPage, TimesheetsPage, PeoplePage, DocumentsPage, MigrationPage } from '../pages/Operations';
 
 vi.mock('../lib/api', () => ({ apiRequest: vi.fn() }));
 
@@ -123,6 +123,109 @@ describe('ApprovalsPage', () => {
         expect.objectContaining({ method: 'POST', body: JSON.stringify({ decision: 'approved' }) })
       )
     );
+  });
+});
+
+describe('MigrationPage', () => {
+  beforeEach(() => {
+    vi.mocked(apiRequest).mockReset();
+    vi.mocked(apiRequest).mockImplementation(async (endpoint: string) => {
+      if (endpoint === '/migration/jobs') return [] as never;
+      return {} as never;
+    });
+  });
+
+  it('shows every CSV row in an editable spreadsheet preview and rechecks changes', async () => {
+    const originalPreview = {
+      id: 'job-1',
+      filename: 'companies.csv',
+      target: 'companies',
+      status: 'dry_run',
+      row_count: 2,
+      duplicate_count: 1,
+      importable_count: 1,
+      errors: [],
+      columns: ['name'],
+      rows_preview: [
+        { row_number: 2, data: { name: 'Existing Co' }, duplicate_reason: 'Already exists in this workspace', errors: [] },
+        { row_number: 3, data: { name: 'New Co' }, duplicate_reason: null, errors: [] },
+      ],
+    };
+    vi.mocked(apiRequest).mockImplementation(async (endpoint: string, options?: RequestInit) => {
+      if (endpoint === '/migration/dry-run' && options?.method === 'POST') return originalPreview as never;
+      if (endpoint === '/migration/jobs') return [] as never;
+      if (endpoint === '/migration/jobs/job-1/preview' && options?.method === 'PUT') {
+        const body = JSON.parse(String(options.body));
+        expect(body.rows[1].name).toBe('Renamed Co');
+        return {
+          ...originalPreview,
+          duplicate_count: 1,
+          rows_preview: originalPreview.rows_preview.map((row, index) => ({
+            ...row,
+            data: body.rows[index],
+          })),
+        } as never;
+      }
+      return {} as never;
+    });
+
+    renderWithRouter(<MigrationPage />);
+    const file = new File(['name\nExisting Co\nNew Co\n'], 'companies.csv', { type: 'text/csv' });
+    const fileInput = screen.getByLabelText('CSV file');
+    Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+    fireEvent.change(fileInput);
+    fireEvent.submit(fileInput.closest('form')!);
+
+    expect(await screen.findByText('Spreadsheet preview · 2 rows')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Existing Co')).toBeInTheDocument();
+    const newCompany = screen.getByRole('textbox', { name: 'Row 3 name' });
+    fireEvent.change(newCompany, { target: { value: 'Renamed Co' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Check edited rows' }));
+
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(
+      '/migration/jobs/job-1/preview',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    expect(await screen.findByDisplayValue('Renamed Co')).toBeInTheDocument();
+    expect(screen.getByText('1 duplicates skipped')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel preview' }));
+    await waitFor(() => expect(screen.queryByText('Spreadsheet preview · 2 rows')).not.toBeInTheDocument());
+  });
+
+  it('closes an applied import preview with Done', async () => {
+    vi.mocked(apiRequest).mockImplementation(async (endpoint: string, options?: RequestInit) => {
+      if (endpoint === '/migration/jobs') return [] as never;
+      if (endpoint === '/migration/dry-run' && options?.method === 'POST') {
+        return {
+          id: 'job-2',
+          filename: 'companies.csv',
+          target: 'companies',
+          status: 'dry_run',
+          row_count: 1,
+          duplicate_count: 0,
+          importable_count: 1,
+          errors: [],
+          columns: ['name'],
+          rows_preview: [{ row_number: 2, data: { name: 'New Co' }, duplicate_reason: null, errors: [] }],
+        } as never;
+      }
+      if (endpoint === '/migration/jobs/job-2/apply') {
+        return { id: 'job-2', status: 'completed', imported: 1, skipped_duplicates: 0 } as never;
+      }
+      return {} as never;
+    });
+
+    renderWithRouter(<MigrationPage />);
+    const file = new File(['name\nNew Co\n'], 'companies.csv', { type: 'text/csv' });
+    const fileInput = screen.getByLabelText('CSV file');
+    Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+    fireEvent.change(fileInput);
+    fireEvent.submit(fileInput.closest('form')!);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply 1 rows' }));
+    const doneButton = await screen.findByRole('button', { name: 'Done' });
+    fireEvent.click(doneButton);
+    await waitFor(() => expect(screen.queryByText('Spreadsheet preview · 1 rows')).not.toBeInTheDocument());
   });
 });
 

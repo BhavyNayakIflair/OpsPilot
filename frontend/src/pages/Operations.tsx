@@ -29,7 +29,8 @@ type LeaveRequest = { id: string; employee_id: string; start_date: string; end_d
 type Invoice = { id: string; invoice_number: string; client_name: string; status: string; currency: string; subtotal_cents: number; tax_cents: number; total_cents: number; paid_cents: number; issue_date: string; due_date: string; notes?: string | null; project_id?: string | null; line_items: { id: string; description: string; quantity: number; unit_price_cents: number; amount_cents: number }[] };
 type Expense = { id: string; submitted_by?: string; vendor: string; category: string; description: string; amount_cents: number; currency: string; expense_date: string; status: string };
 type ApprovalItem = { id: string; entity_type: string; label: string; reason?: string; amount_cents?: number; currency?: string; created_at: string; assumptions?: string[]; quote_preview?: { title?: string; currency?: string; total_cents?: number; discount_bps?: number; tax_bps?: number; line_items?: { description: string; quantity: number; unit_price_cents: number }[] } };
-type MigrationJob = { id: string; filename: string; target: string; status: string; row_count?: number; imported?: number; errors?: string[]; sample?: Record<string, string>[] };
+type MigrationPreviewRow = { row_number: number; data: Record<string, string>; duplicate_reason?: string | null; errors: string[] };
+type MigrationJob = { id: string; filename: string; target: string; status: string; row_count?: number; imported?: number; skipped_duplicates?: number; duplicate_count?: number; importable_count?: number; errors?: string[]; columns?: string[]; rows_preview?: MigrationPreviewRow[] };
 type Document = { id: string; title: string; category: string; content: string; updated_at: string };
 type WorkflowRun = { id: string; workflow_type: string; status: string; created_at: string; input_data?: Record<string, unknown>; result_data: { items?: Record<string, unknown>[]; quote_id?: string; flags?: string[]; error?: string } };
 type KnowledgeAskResult = {
@@ -3677,6 +3678,7 @@ export function MigrationPage() {
   const [target, setTarget] = useState('leads');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<MigrationJob | null>(null);
+  const [previewDirty, setPreviewDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -3713,6 +3715,7 @@ export function MigrationPage() {
     form.append('file', file);
     try {
       setPreview(await apiRequest<MigrationJob>('/migration/dry-run', { method: 'POST', body: form }));
+      setPreviewDirty(false);
       await load();
       toast.info('CSV preview is ready. Review it before applying the import.');
     } catch (err) {
@@ -3722,16 +3725,51 @@ export function MigrationPage() {
     }
   };
 
+  const closePreview = () => {
+    setPreview(null);
+    setPreviewDirty(false);
+  };
+
   const apply = async () => {
-    if (!preview) return;
+    if (!preview || previewDirty) return;
     setBusy(true);
     try {
       const done = await apiRequest<MigrationJob>(`/migration/jobs/${preview.id}/apply`, { method: 'POST' });
       setPreview({ ...preview, ...done });
       await load();
-      toast.success(`Import completed: ${done.imported ?? 0} records imported.`);
+      toast.success(
+        `Import completed: ${done.imported ?? 0} imported, ${done.skipped_duplicates ?? 0} duplicates skipped.`,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Unable to apply import');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updatePreviewCell = (rowNumber: number, column: string, value: string) => {
+    setPreview((current) => current ? {
+      ...current,
+      rows_preview: current.rows_preview?.map((row) => row.row_number === rowNumber
+        ? { ...row, data: { ...row.data, [column]: value } }
+        : row),
+    } : current);
+    setPreviewDirty(true);
+  };
+
+  const recheckPreview = async () => {
+    if (!preview) return;
+    setBusy(true);
+    try {
+      const checked = await apiRequest<MigrationJob>(`/migration/jobs/${preview.id}/preview`, {
+        method: 'PUT',
+        body: JSON.stringify({ rows: preview.rows_preview?.map((row) => row.data) || [] }),
+      });
+      setPreview(checked);
+      setPreviewDirty(false);
+      toast.success('Edits saved; duplicate and validation checks are up to date.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Unable to validate preview edits');
     } finally {
       setBusy(false);
     }
@@ -3794,7 +3832,11 @@ export function MigrationPage() {
                 <h2 className="font-semibold text-semantic-text">Preview: {preview.filename}</h2>
                 <div className="flex flex-wrap items-center gap-2 mt-1">
                   <Badge variant="muted" size="sm">{preview.target}</Badge>
-                  <Badge variant="success" size="sm">{preview.imported ?? 0}/{preview.row_count ?? 0} rows</Badge>
+                  <Badge variant="muted" size="sm">{preview.row_count ?? preview.rows_preview?.length ?? 0} total rows</Badge>
+                  <Badge variant="success" size="sm">{preview.importable_count ?? 0} ready</Badge>
+                  <Badge variant={preview.duplicate_count ? 'warning' : 'muted'} size="sm">
+                    {preview.duplicate_count ?? 0} duplicates skipped
+                  </Badge>
                   {(preview.errors?.length ?? 0) > 0 && (
                     <Badge variant="danger" size="sm">{preview.errors?.length ?? 0} errors</Badge>
                   )}
@@ -3802,27 +3844,100 @@ export function MigrationPage() {
                 </div>
               </div>
               {preview.status === 'dry_run' && (
-                <Button
-                  loading={busy}
-                  disabled={busy || Boolean(preview.errors?.length)}
-                  onClick={() => void apply()}
-                >
-                  Apply import
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="ghost" disabled={busy} onClick={closePreview}>
+                    Cancel preview
+                  </Button>
+                  {previewDirty && (
+                    <Button variant="secondary" loading={busy} disabled={busy} onClick={() => void recheckPreview()}>
+                      Check edited rows
+                    </Button>
+                  )}
+                  <Button
+                    loading={busy}
+                    disabled={busy || previewDirty || Boolean(preview.errors?.length) || !(preview.importable_count ?? 0)}
+                    onClick={() => void apply()}
+                  >
+                    Apply {preview.importable_count ?? 0} rows
+                  </Button>
+                </div>
+              )}
+              {preview.status === 'completed' && (
+                <Button variant="primary" onClick={closePreview}>
+                  Done
                 </Button>
               )}
             </CardHeader>
             <CardContent className="space-y-3">
+              {previewDirty && (
+                <Alert variant="warning">
+                  You have unsaved edits. Check edited rows to refresh validation and duplicate results before importing.
+                </Alert>
+              )}
               {preview.errors?.map((item) => (
                 <Alert key={item} variant="danger">{item}</Alert>
               ))}
               {preview.status === 'completed' && (
-                <Alert variant="success">Imported {preview.imported} records.</Alert>
+                <Alert variant="success">
+                  Imported {preview.imported ?? 0} records; skipped {preview.skipped_duplicates ?? 0} duplicates.
+                </Alert>
               )}
-              <div>
-                <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted mb-2">Sample rows</h3>
-                <pre className="max-h-72 overflow-auto rounded-ui-xl bg-slate-950 p-4 text-xs text-slate-100">
-                  {JSON.stringify(preview.sample || [], null, 2)}
-                </pre>
+              <div className="min-w-0">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted">
+                    Spreadsheet preview · {preview.rows_preview?.length ?? 0} rows
+                  </h3>
+                  {preview.status === 'dry_run' && (
+                    <span className="text-xs text-semantic-text-muted">Edit cells directly; duplicate rows are excluded from import.</span>
+                  )}
+                </div>
+                <div className="max-h-[32rem] overflow-auto rounded-ui-xl border border-semantic-border">
+                  <table className="w-full min-w-max border-separate border-spacing-0 text-left text-xs">
+                    <thead className="sticky top-0 z-10 bg-semantic-surface-muted text-semantic-text-muted">
+                      <tr>
+                        <th className="sticky left-0 z-20 border-b border-r border-semantic-border bg-semantic-surface-muted px-3 py-2">Row</th>
+                        <th className="border-b border-r border-semantic-border px-3 py-2">Import status</th>
+                        {(preview.columns || []).map((column) => (
+                          <th key={column} className="border-b border-r border-semantic-border px-3 py-2 font-bold uppercase tracking-wide">
+                            {column.replaceAll('_', ' ')}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(preview.rows_preview || []).map((row) => (
+                        <tr key={row.row_number} className={row.duplicate_reason ? 'bg-semantic-warning-soft/30' : 'bg-semantic-surface'}>
+                          <td className="sticky left-0 border-b border-r border-semantic-border bg-inherit px-3 py-1.5 font-semibold text-semantic-text">
+                            {row.row_number}
+                          </td>
+                          <td className="max-w-56 whitespace-normal border-b border-r border-semantic-border px-3 py-1.5">
+                            {row.duplicate_reason ? (
+                              <span className="font-semibold text-semantic-warning">{row.duplicate_reason} · skipped</span>
+                            ) : row.errors.length ? (
+                              <span className="font-semibold text-semantic-danger">{row.errors.join('; ')}</span>
+                            ) : (
+                              <span className="font-semibold text-semantic-success">Ready</span>
+                            )}
+                          </td>
+                          {(preview.columns || []).map((column) => (
+                            <td key={column} className="border-b border-r border-semantic-border p-0">
+                              <input
+                                aria-label={`Row ${row.row_number} ${column}`}
+                                className="w-full min-w-36 bg-transparent px-3 py-2 text-semantic-text outline-none focus:bg-semantic-accent-soft/40 focus:ring-2 focus:ring-inset focus:ring-semantic-accent"
+                                value={row.data[column] ?? ''}
+                                disabled={preview.status !== 'dry_run' || busy}
+                                onChange={(event) => updatePreviewCell(row.row_number, column, event.target.value)}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!(preview.rows_preview?.length) && (
+                    <p className="p-4 text-sm text-semantic-text-muted">This CSV contains no data rows.</p>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
