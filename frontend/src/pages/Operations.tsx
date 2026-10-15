@@ -5,7 +5,7 @@ import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/toast';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Sparkles, CheckCircle2, Inbox, Loader2, ChevronDown, Target, Activity, Receipt, ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, CalendarDays, Check, CircleCheck, CircleX, Clock3, ReceiptText, RefreshCw, X, AlarmClock, WalletCards, FileText, Plus, CircleDollarSign, Send, Ban } from 'lucide-react';
+import { Search, Sparkles, CheckCircle2, Inbox, Loader2, ChevronDown, Target, Activity, Receipt, ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, CalendarDays, Check, CircleCheck, CircleX, Clock3, ReceiptText, RefreshCw, X, AlarmClock, WalletCards, FileText, Plus, CircleDollarSign, Send, Ban, Eye } from 'lucide-react';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Badge } from '../components/ui/Badge';
@@ -1048,7 +1048,7 @@ function WorkDescription({ text }: { text: string }) {
     if (heading) {
       const Heading = `h${heading[1].length}` as 'h1' | 'h2' | 'h3';
       blocks.push(
-        <Heading key={index} className="mt-5 first:mt-0 text-base font-bold text-semantic-text">
+        <Heading key={blocks.length} className="mt-5 first:mt-0 text-base font-bold text-semantic-text">
           {renderWorkDescriptionInline(heading[2])}
         </Heading>
       );
@@ -1090,6 +1090,24 @@ function WorkDescription({ text }: { text: string }) {
   return <div>{blocks.length ? blocks : <p className="text-semantic-text-muted">No description provided.</p>}</div>;
 }
 
+function getDocumentPreview(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line
+      .replace(/^#{1,6}\s+/, '')
+      .replace(/^>\s?/, '')
+      .replace(/^([-*+]|\d+[.)])\s+/, '')
+      .replace(/\*\*(.+?)\*\*|__(.+?)__/g, '$1$2')
+      .replace(/~~(.+?)~~/g, '$1')
+      .replace(/\*(.+?)\*|_(.+?)_/g, '$1$2')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    )
+    .join('\n');
+}
+
 export function TimesheetsPage() {
   const { user } = useAuth();
   const toast = useToast();
@@ -1117,16 +1135,22 @@ export function TimesheetsPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [viewingEntry, setViewingEntry] = useState<Entry | null>(null);
   const closeDescriptionRef = useRef<HTMLButtonElement>(null);
+  const descriptionTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeDescription = useCallback(() => {
+    setViewingEntry(null);
+    descriptionTriggerRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     if (!viewingEntry) return;
     closeDescriptionRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setViewingEntry(null);
+      if (event.key === 'Escape') closeDescription();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [viewingEntry]);
+  }, [closeDescription, viewingEntry]);
 
   // Fix: no longer depends on `projectId`. Previously, choosing a project in the form recreated this
   // callback and triggered a full reload (table loading flash) every time the project selection changed.
@@ -1310,19 +1334,30 @@ export function TimesheetsPage() {
       header: 'Work',
       track: 'minmax(0, 2.6fr)',
       role: 'primary',
-      render: (r) => (
-        <div className="min-w-0">
-          <button
-            type="button"
-            className="block w-full truncate text-left font-semibold text-semantic-text hover:text-semantic-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-semantic-accent"
-            title="View full work description"
-            onClick={() => setViewingEntry(r)}
-          >
-            {r.description}
-          </button>
-          <div className="mt-0.5 truncate text-xs text-semantic-text-muted">{projectName(r.project_id)}</div>
-        </div>
-      ),
+      render: (r) => {
+        const preview = r.description
+          .split(/\r?\n/)
+          .find((line) => line.trim())
+          ?.trim()
+          .replace(/^(?:#{1,3}\s+|[-*]\s+|\d+\.\s+)/, '') || '';
+        return (
+          <div className="min-w-0">
+            <button
+              type="button"
+              aria-label="View full work description"
+              className="block w-full truncate text-left font-semibold text-semantic-text hover:text-semantic-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-semantic-accent"
+              title="View full work description"
+              onClick={(event) => {
+                descriptionTriggerRef.current = event.currentTarget;
+                setViewingEntry(r);
+              }}
+            >
+              {renderWorkDescriptionInline(preview)}
+            </button>
+            <div className="mt-0.5 truncate text-xs text-semantic-text-muted">{projectName(r.project_id)}</div>
+          </div>
+        );
+      },
     },
     {
       key: 'employee',
@@ -1581,13 +1616,13 @@ export function TimesheetsPage() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setViewingEntry(null);
+            if (event.target === event.currentTarget) closeDescription();
           }}
         >
           <section
             role="dialog"
             aria-modal="true"
-            aria-labelledby="work-description-title"
+            aria-label="Work description"
             className="flex max-h-[min(85vh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface shadow-ui-xl"
           >
             <header className="flex items-start justify-between gap-4 border-b border-semantic-border px-6 py-5">
@@ -1597,9 +1632,9 @@ export function TimesheetsPage() {
                   {projectName(viewingEntry.project_id)}
                 </h2>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-semantic-text-muted">
-                  <span>{employeeName(viewingEntry)}</span>
-                  <span>{formatEntryDate(viewingEntry.entry_date)}</span>
-                  <span>{(viewingEntry.minutes / 60).toFixed(1)}h</span>
+                  <span>Name: {employeeName(viewingEntry)}</span>
+                  <span>Date: {formatEntryDate(viewingEntry.entry_date)}</span>
+                  <span>{(viewingEntry.minutes / 60).toFixed(1)}h logged</span>
                 </div>
               </div>
               <button
@@ -1607,7 +1642,7 @@ export function TimesheetsPage() {
                 type="button"
                 aria-label="Close work description"
                 className="shrink-0 rounded-ui-lg p-2 text-semantic-text-muted transition hover:bg-semantic-surface-muted hover:text-semantic-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-semantic-accent"
-                onClick={() => setViewingEntry(null)}
+                onClick={closeDescription}
               >
                 <X className="h-5 w-5" />
               </button>
@@ -3171,10 +3206,12 @@ export function ExpensesPage() {
 export function DocumentsPage() {
   const toast = useToast();
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [viewingDocument, setViewingDocument] = useState<Document | null>(null);
   const [query, setQuery] = useState('');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('general');
   const [content, setContent] = useState('');
+  const [documentEditorMode, setDocumentEditorMode] = useState<'write' | 'preview'>('write');
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState('');
   const [semanticQuery, setSemanticQuery] = useState('');
@@ -3186,6 +3223,23 @@ export function DocumentsPage() {
   const [sortKey, setSortKey] = useState<string | null>('updated_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const editor = useEditorScroll();
+  const closeDocumentRef = useRef<HTMLButtonElement>(null);
+  const documentViewTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeDocument = useCallback(() => {
+    setViewingDocument(null);
+    documentViewTriggerRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!viewingDocument) return;
+    closeDocumentRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDocument();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeDocument, viewingDocument]);
 
   const load = useCallback(async (q = query) => {
     setLoading(true);
@@ -3209,7 +3263,7 @@ export function DocumentsPage() {
         method: editingId ? 'PUT' : 'POST',
         body: JSON.stringify({ title, category, content }),
       });
-      setTitle(''); setContent(''); setEditingId('');
+      setTitle(''); setContent(''); setEditingId(''); setDocumentEditorMode('write');
       await load('');
       toast.success(isEditing ? 'Document updated.' : 'Document created.');
     } catch (e) {
@@ -3222,6 +3276,7 @@ export function DocumentsPage() {
     setTitle(doc.title);
     setCategory(doc.category);
     setContent(doc.content);
+    setDocumentEditorMode('write');
     editor.focusEditor();
   };
 
@@ -3317,11 +3372,52 @@ export function DocumentsPage() {
                 </div>
                 <label className="text-xs font-semibold text-semantic-text-muted">
                   Document text
-                  <textarea className={`${fieldControl} mt-1.5 min-h-[180px]`} required rows={6} placeholder="Paste the document text you want your team to search" value={content} onChange={(e) => setContent(e.target.value)} />
+                  <div className="mt-1.5 overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface focus-within:ring-4 focus-within:ring-semantic-border">
+                    <div className="flex items-center gap-1 border-b border-semantic-border bg-semantic-surface-muted/50 px-3 py-2">
+                      {(['write', 'preview'] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={documentEditorMode === mode}
+                          onClick={() => setDocumentEditorMode(mode)}
+                          className={cn(
+                            'rounded-ui-lg px-3 py-1.5 text-xs font-semibold capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-semantic-accent',
+                            documentEditorMode === mode
+                              ? 'bg-semantic-surface text-semantic-text shadow-ui-sm'
+                              : 'text-semantic-text-muted hover:text-semantic-text'
+                          )}
+                        >
+                          {mode}
+                        </button>
+                      ))}
+                      {documentEditorMode === 'preview' && (
+                        <span className="ml-auto text-[11px] font-normal text-semantic-text-muted">Formatted preview</span>
+                      )}
+                    </div>
+                    {documentEditorMode === 'write' ? (
+                      <textarea
+                        className="min-h-[320px] w-full resize-y bg-transparent px-4 py-3.5 text-sm leading-7 text-semantic-text placeholder:text-semantic-text-muted focus:outline-none"
+                        required
+                        rows={12}
+                        placeholder="Write or paste your document here. Use # headings, **bold text**, and - list items for clear formatting."
+                        value={content}
+                        onChange={(e) => setContent(e.target.value)}
+                      />
+                    ) : (
+                      <div className="min-h-[320px] max-h-[480px] overflow-y-auto px-4 py-3.5 text-sm">
+                        {content.trim()
+                          ? <WorkDescription text={content} />
+                          : <p className="text-semantic-text-muted">Your formatted document preview will appear here.</p>}
+                      </div>
+                    )}
+                  </div>
+                  <span className="mt-1.5 block font-normal leading-5 text-semantic-text-muted">
+                    Supports headings, bold and italic text, inline code, and ordered or unordered lists. Switch to Preview to see the formatted document.
+                  </span>
                 </label>
                 <div className="flex justify-end gap-2">
                   {editingId && (
-                    <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setTitle(''); setCategory('general'); setContent(''); }}>
+                    <Button type="button" variant="secondary" onClick={() => { setEditingId(''); setTitle(''); setCategory('general'); setContent(''); setDocumentEditorMode('write'); }}>
                       Cancel
                     </Button>
                   )}
@@ -3459,13 +3555,26 @@ export function DocumentsPage() {
                       </div>
                       <p className="text-xs text-semantic-text-muted mt-0.5">Updated {doc.updated_at}</p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={(event) => {
+                          documentViewTriggerRef.current = event.currentTarget;
+                          setViewingDocument(doc);
+                        }}
+                      >
+                        <Eye className="mr-1.5 h-3.5 w-3.5" />
+                        View
+                      </Button>
                       <Button variant="secondary" size="sm" onClick={() => edit(doc)}>Edit</Button>
                       <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(doc.id)}>Delete</Button>
                     </div>
                   </CardHeader>
                   <CardContent className="pt-0">
-                    <p className="whitespace-pre-wrap text-sm leading-6 text-semantic-text-muted line-clamp-2">{doc.content}</p>
+                    <p className="line-clamp-2 whitespace-pre-wrap text-sm leading-6 text-semantic-text-muted">
+                      {getDocumentPreview(doc.content)}
+                    </p>
                   </CardContent>
                 </Card>
               ))
@@ -3473,6 +3582,45 @@ export function DocumentsPage() {
           </CardContent>
         </Card>
       </div>
+      {viewingDocument && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeDocument();
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Document: ${viewingDocument.title}`}
+            className="flex max-h-[min(88vh,820px)] w-full max-w-3xl flex-col overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface shadow-ui-xl"
+          >
+            <header className="flex items-start justify-between gap-4 border-b border-semantic-border px-6 py-5">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-xl font-bold text-semantic-text">{viewingDocument.title}</h2>
+                  <Badge variant={categoryBadgeVariant(viewingDocument.category)} size="sm">
+                    {categoryLabel(viewingDocument.category)}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-semantic-text-muted">Updated {viewingDocument.updated_at}</p>
+              </div>
+              <button
+                ref={closeDocumentRef}
+                type="button"
+                aria-label="Close document viewer"
+                className="shrink-0 rounded-ui-lg p-2 text-semantic-text-muted transition hover:bg-semantic-surface-muted hover:text-semantic-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-semantic-accent"
+                onClick={closeDocument}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <div className="overflow-y-auto px-6 py-5">
+              <WorkDescription text={viewingDocument.content} />
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

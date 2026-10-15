@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { apiRequest } from '../lib/api';
-import { ApprovalsPage, ProjectsPage, TimesheetsPage, PeoplePage } from '../pages/Operations';
+import { ApprovalsPage, ProjectsPage, TimesheetsPage, PeoplePage, DocumentsPage } from '../pages/Operations';
 
 vi.mock('../lib/api', () => ({ apiRequest: vi.fn() }));
 
@@ -256,6 +256,37 @@ describe('TimesheetsPage (Characterization)', () => {
     );
   });
 
+  it('opens a formatted work description dialog with entry details', async () => {
+    vi.mocked(apiRequest).mockImplementation(async (endpoint: string) => {
+      if (endpoint === '/operations/projects') return mockProjects as never;
+      if (endpoint === '/operations/timesheets') {
+        return [{
+          ...mockTimesheets[0],
+          description: '**Reviewed API**\n- Added tests\n- Fixed a bug',
+        }] as never;
+      }
+      return [] as never;
+    });
+
+    renderWithRouter(<TimesheetsPage />);
+    const descriptionButton = await screen.findByRole('button', { name: 'View full work description' });
+    expect(descriptionButton).toHaveTextContent('Reviewed API');
+    expect(descriptionButton).not.toHaveTextContent('**');
+    expect(descriptionButton.querySelector('strong')).toHaveTextContent('Reviewed API');
+    fireEvent.click(descriptionButton);
+
+    const dialog = screen.getByRole('dialog', { name: 'Work description' });
+    expect(dialog).toHaveTextContent('Client Portal');
+    expect(dialog).toHaveTextContent('Name: You');
+    expect(dialog).toHaveTextContent('Date: Oct 1, 2026');
+    expect(dialog.querySelector('strong')).toHaveTextContent('Reviewed API');
+    expect(dialog).toHaveTextContent('Added tests');
+    expect(dialog).toHaveTextContent('Fixed a bug');
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('allows owner to approve a pending entry', async () => {
     vi.mocked(apiRequest).mockImplementation(async (endpoint: string) => {
       if (endpoint === '/operations/projects') return mockProjects as never;
@@ -284,6 +315,57 @@ describe('TimesheetsPage (Characterization)', () => {
     });
     renderWithRouter(<TimesheetsPage />);
     expect(await screen.findByText('Failed to load timesheet entries')).toBeInTheDocument();
+  });
+});
+
+describe('DocumentsPage', () => {
+  beforeEach(() => {
+    vi.mocked(apiRequest).mockReset();
+  });
+
+  it('opens a formatted document viewer and closes it with Escape', async () => {
+    const documentContent = '# Payment terms\n\nPay within **30 days**.\n- Send an invoice\n- Follow up';
+    vi.mocked(apiRequest).mockResolvedValue([{
+      id: 'doc-1',
+      title: 'Invoice Policy',
+      category: 'policy',
+      content: documentContent,
+      updated_at: '2026-10-15T10:00:00Z',
+    }] as never);
+
+    const { container } = renderWithRouter(<DocumentsPage />);
+    await screen.findByRole('button', { name: /View/ });
+    const preview = container.querySelector('.line-clamp-2');
+    expect(preview).toHaveTextContent('Payment terms');
+    expect(preview).toHaveTextContent('Pay within 30 days.');
+    expect(preview).not.toHaveTextContent('#');
+    expect(preview).not.toHaveTextContent('**');
+
+    fireEvent.click(await screen.findByRole('button', { name: /View/ }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Document: Invoice Policy' });
+    expect(dialog).toHaveTextContent('Invoice Policy');
+    expect(dialog.querySelector('h1')).toHaveTextContent('Payment terms');
+    expect(dialog.querySelector('strong')).toHaveTextContent('30 days');
+    expect(dialog.querySelectorAll('li')).toHaveLength(2);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('previews formatted editor content and preserves it when switching back to write', async () => {
+    vi.mocked(apiRequest).mockResolvedValue([] as never);
+
+    renderWithRouter(<DocumentsPage />);
+    const textarea = await screen.findByPlaceholderText(/Write or paste your document here/);
+    fireEvent.change(textarea, { target: { value: '# Invoice Policy\n\nPay within **30 days**.' } });
+    fireEvent.click(screen.getByText(/^preview$/i));
+
+    expect(screen.getByRole('heading', { name: 'Invoice Policy' }).tagName).toBe('H1');
+    expect(screen.getByText('30 days').tagName).toBe('STRONG');
+
+    fireEvent.click(screen.getByText(/^write$/i));
+    expect(screen.getByPlaceholderText(/Write or paste your document here/)).toHaveValue('# Invoice Policy\n\nPay within **30 days**.');
   });
 });
 
