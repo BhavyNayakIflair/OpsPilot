@@ -42,7 +42,8 @@ async def test_csv_dry_run_apply_documents_workflows_and_approvals(async_client:
 async def test_migration_preview_lists_duplicates_and_imports_edited_rows(async_client: AsyncClient):
     headers = await register(async_client, "migration_preview_owner@example.com")
     existing = await async_client.post(
-        "/api/v1/crm/companies", headers=headers, json={"name": "Existing Co"},
+        "/api/v1/crm/companies", headers=headers,
+        json={"name": "Existing Co", "website": "https://existing.example"},
     )
     assert existing.status_code == 201, existing.text
 
@@ -53,7 +54,7 @@ async def test_migration_preview_lists_duplicates_and_imports_edited_rows(async_
         files={
             "file": (
                 "companies.csv",
-                b"name,website\nExisting Co,https://existing.example\nNew Co,https://new.example\nnew co,https://duplicate.example\n",
+                b"name,website\nExisting Co,https://replacement.example\nNew Co,https://new.example\nnew co,https://duplicate.example\n",
                 "text/csv",
             ),
         },
@@ -86,3 +87,68 @@ async def test_migration_preview_lists_duplicates_and_imports_edited_rows(async_
     assert imported.json()["skipped_duplicates"] == 1
     companies = await async_client.get("/api/v1/crm/companies", headers=headers)
     assert {company["name"] for company in companies.json()} == {"Existing Co", "Renamed Co", "new co"}
+    existing_company = next(company for company in companies.json() if company["name"] == "Existing Co")
+    assert existing_company["website"] == "https://existing.example"
+
+
+@pytest.mark.asyncio
+async def test_company_migration_enriches_partial_company_created_by_contact_import(async_client: AsyncClient):
+    headers = await register(async_client, "migration_company_enrichment@example.com")
+    contacts_upload = await async_client.post(
+        "/api/v1/migration/dry-run",
+        headers=headers,
+        data={"target": "contacts"},
+        files={
+            "file": (
+                "contacts.csv",
+                b"first_name,last_name,email,company\nTaylor,Reed,taylor@example.com,Northstar Labs\n",
+                "text/csv",
+            ),
+        },
+    )
+    assert contacts_upload.status_code == 201, contacts_upload.text
+    contact_import = await async_client.post(
+        f"/api/v1/migration/jobs/{contacts_upload.json()['id']}/apply",
+        headers=headers,
+    )
+    assert contact_import.status_code == 200, contact_import.text
+
+    companies = await async_client.get("/api/v1/crm/companies", headers=headers)
+    partial_company = next(row for row in companies.json() if row["name"] == "Northstar Labs")
+    assert partial_company["website"] is None
+
+    companies_upload = await async_client.post(
+        "/api/v1/migration/dry-run",
+        headers=headers,
+        data={"target": "companies"},
+        files={
+            "file": (
+                "companies.csv",
+                b"name,website,industry,notes\nNorthstar Labs,https://northstar.example,Technology,Imported from Odoo\n",
+                "text/csv",
+            ),
+        },
+    )
+    assert companies_upload.status_code == 201, companies_upload.text
+    preview = companies_upload.json()
+    preview_row = preview["rows_preview"][0]
+    assert preview["duplicate_count"] == 0
+    assert preview["update_count"] == 1
+    assert preview["importable_count"] == 1
+    assert preview_row["operation"] == "update"
+    assert preview_row["update_fields"] == ["website", "industry", "notes"]
+
+    imported = await async_client.post(
+        f"/api/v1/migration/jobs/{preview['id']}/apply",
+        headers=headers,
+    )
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["imported"] == 0
+    assert imported.json()["updated"] == 1
+    assert imported.json()["skipped_duplicates"] == 0
+
+    companies = await async_client.get("/api/v1/crm/companies", headers=headers)
+    enriched = next(row for row in companies.json() if row["name"] == "Northstar Labs")
+    assert enriched["website"] == "https://northstar.example"
+    assert enriched["industry"] == "Technology"
+    assert enriched["notes"] == "Imported from Odoo"

@@ -29,8 +29,8 @@ type LeaveRequest = { id: string; employee_id: string; start_date: string; end_d
 type Invoice = { id: string; invoice_number: string; client_name: string; status: string; currency: string; subtotal_cents: number; tax_cents: number; total_cents: number; paid_cents: number; issue_date: string; due_date: string; notes?: string | null; project_id?: string | null; line_items: { id: string; description: string; quantity: number; unit_price_cents: number; amount_cents: number }[] };
 type Expense = { id: string; submitted_by?: string; vendor: string; category: string; description: string; amount_cents: number; currency: string; expense_date: string; status: string };
 type ApprovalItem = { id: string; entity_type: string; label: string; reason?: string; amount_cents?: number; currency?: string; created_at: string; assumptions?: string[]; quote_preview?: { title?: string; currency?: string; total_cents?: number; discount_bps?: number; tax_bps?: number; line_items?: { description: string; quantity: number; unit_price_cents: number }[] } };
-type MigrationPreviewRow = { row_number: number; data: Record<string, string>; duplicate_reason?: string | null; errors: string[] };
-type MigrationJob = { id: string; filename: string; target: string; status: string; row_count?: number; imported?: number; skipped_duplicates?: number; duplicate_count?: number; importable_count?: number; errors?: string[]; columns?: string[]; rows_preview?: MigrationPreviewRow[] };
+type MigrationPreviewRow = { row_number: number; data: Record<string, string>; operation?: 'create' | 'update' | 'skip'; update_fields?: string[]; duplicate_reason?: string | null; errors: string[] };
+type MigrationJob = { id: string; filename: string; target: string; status: string; row_count?: number; imported?: number; updated?: number; skipped_duplicates?: number; duplicate_count?: number; update_count?: number; importable_count?: number; errors?: string[]; columns?: string[]; rows_preview?: MigrationPreviewRow[] };
 type Document = { id: string; title: string; category: string; content: string; updated_at: string };
 type WorkflowRun = { id: string; workflow_type: string; status: string; created_at: string; input_data?: Record<string, unknown>; result_data: { items?: Record<string, unknown>[]; quote_id?: string; flags?: string[]; error?: string } };
 type KnowledgeAskResult = {
@@ -3738,7 +3738,7 @@ export function MigrationPage() {
       setPreview({ ...preview, ...done });
       await load();
       toast.success(
-        `Import completed: ${done.imported ?? 0} imported, ${done.skipped_duplicates ?? 0} duplicates skipped.`,
+        `Import completed: ${done.imported ?? 0} imported, ${done.updated ?? 0} updated, ${done.skipped_duplicates ?? 0} duplicates skipped.`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Unable to apply import');
@@ -3834,6 +3834,9 @@ export function MigrationPage() {
                   <Badge variant="muted" size="sm">{preview.target}</Badge>
                   <Badge variant="muted" size="sm">{preview.row_count ?? preview.rows_preview?.length ?? 0} total rows</Badge>
                   <Badge variant="success" size="sm">{preview.importable_count ?? 0} ready</Badge>
+                  <Badge variant={preview.update_count ? 'ai' : 'muted'} size="sm">
+                    {preview.update_count ?? 0} existing to update
+                  </Badge>
                   <Badge variant={preview.duplicate_count ? 'warning' : 'muted'} size="sm">
                     {preview.duplicate_count ?? 0} duplicates skipped
                   </Badge>
@@ -3879,7 +3882,7 @@ export function MigrationPage() {
               ))}
               {preview.status === 'completed' && (
                 <Alert variant="success">
-                  Imported {preview.imported ?? 0} records; skipped {preview.skipped_duplicates ?? 0} duplicates.
+                  Imported {preview.imported ?? 0} records; updated {preview.updated ?? 0} existing companies; skipped {preview.skipped_duplicates ?? 0} duplicates.
                 </Alert>
               )}
               <div className="min-w-0">
@@ -3906,12 +3909,16 @@ export function MigrationPage() {
                     </thead>
                     <tbody>
                       {(preview.rows_preview || []).map((row) => (
-                        <tr key={row.row_number} className={row.duplicate_reason ? 'bg-semantic-warning-soft/30' : 'bg-semantic-surface'}>
+                        <tr key={row.row_number} className={row.operation === 'skip' ? 'bg-semantic-warning-soft/30' : row.operation === 'update' ? 'bg-semantic-accent-soft/30' : 'bg-semantic-surface'}>
                           <td className="sticky left-0 border-b border-r border-semantic-border bg-inherit px-3 py-1.5 font-semibold text-semantic-text">
                             {row.row_number}
                           </td>
                           <td className="max-w-56 whitespace-normal border-b border-r border-semantic-border px-3 py-1.5">
-                            {row.duplicate_reason ? (
+                            {row.operation === 'update' ? (
+                              <span className="font-semibold text-semantic-accent">
+                                Update existing · {row.update_fields?.join(', ')}
+                              </span>
+                            ) : row.operation === 'skip' || row.duplicate_reason ? (
                               <span className="font-semibold text-semantic-warning">{row.duplicate_reason} · skipped</span>
                             ) : row.errors.length ? (
                               <span className="font-semibold text-semantic-danger">{row.errors.join('; ')}</span>

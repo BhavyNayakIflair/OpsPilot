@@ -78,8 +78,11 @@ def _columns(target: str, rows: list[dict[str, str]]) -> list[str]:
 
 async def _existing_keys(db: AsyncSession, org_id: str, target: str) -> set[tuple[str, ...]]:
     if target == "companies":
-        names = await db.scalars(select(Company.name).where(Company.org_id == org_id))
-        return {key for name in names if (key := _row_key(target, {"name": name}))}
+        companies = await db.scalars(select(Company).where(Company.org_id == org_id))
+        return {
+            key for company in companies
+            if (key := _row_key(target, {"name": company.name}))
+        }
     if target == "contacts":
         rows = await db.execute(
             select(Contact, Company.name)
@@ -106,24 +109,51 @@ async def _existing_keys(db: AsyncSession, org_id: str, target: str) -> set[tupl
     }
 
 
+def _company_update_fields(company: Company, row: dict[str, str]) -> list[str]:
+    return [
+        field for field in ("website", "industry", "notes")
+        if row.get(field, "").strip() and not (getattr(company, field) or "").strip()
+    ]
+
+
 async def _preview_rows(
     db: AsyncSession, org_id: str, target: str, rows: list[dict[str, str]],
 ) -> list[dict]:
     existing = await _existing_keys(db, org_id, target)
+    existing_companies: dict[tuple[str, ...], Company] = {}
+    if target == "companies":
+        companies = await db.scalars(select(Company).where(Company.org_id == org_id))
+        existing_companies = {
+            key: company for company in companies
+            if (key := _row_key(target, {"name": company.name}))
+        }
     seen: dict[tuple[str, ...], int] = {}
     result = []
     for index, row in enumerate(rows, start=2):
         key = _row_key(target, row)
         duplicate_reason = None
-        if key and key in existing:
-            duplicate_reason = "Already exists in this workspace"
-        elif key and key in seen:
+        operation = "create"
+        update_fields: list[str] = []
+        if key and key in seen:
+            operation = "skip"
             duplicate_reason = f"Duplicate of CSV row {seen[key]}"
+        elif key and target == "companies" and key in existing_companies:
+            update_fields = _company_update_fields(existing_companies[key], row)
+            if update_fields:
+                operation = "update"
+            else:
+                operation = "skip"
+                duplicate_reason = "Already exists in this workspace"
+        elif key and key in existing:
+            operation = "skip"
+            duplicate_reason = "Already exists in this workspace"
         if key:
             seen.setdefault(key, index)
         result.append({
             "row_number": index,
             "data": row,
+            "operation": operation,
+            "update_fields": update_fields,
             "duplicate_reason": duplicate_reason,
             "errors": _row_errors(target, row, index),
         })
@@ -131,7 +161,8 @@ async def _preview_rows(
 
 
 def _preview_response(job: MigrationJob, rows_preview: list[dict], columns: list[str]) -> dict:
-    duplicates = sum(row["duplicate_reason"] is not None for row in rows_preview)
+    duplicates = sum(row["operation"] == "skip" for row in rows_preview)
+    updates = sum(row["operation"] == "update" for row in rows_preview)
     return {
         "id": job.id,
         "filename": job.filename,
@@ -141,7 +172,11 @@ def _preview_response(job: MigrationJob, rows_preview: list[dict], columns: list
         "imported": getattr(job, "imported", None),
         "skipped_duplicates": getattr(job, "skipped_duplicates", None),
         "duplicate_count": duplicates,
-        "importable_count": len(rows_preview) - duplicates,
+        "update_count": updates,
+        "importable_count": sum(
+            row["operation"] in {"create", "update"} and not row["errors"]
+            for row in rows_preview
+        ),
         "errors": job.errors or [],
         "columns": columns,
         "rows_preview": rows_preview,
@@ -239,11 +274,45 @@ async def apply_import(job_id: str, org: Organization = Depends(get_current_tena
     rows_preview = await _preview_rows(db, org.id, job.target, rows)
     duplicate_indexes = {
         index for index, row in enumerate(rows_preview)
-        if row["duplicate_reason"] is not None
+        if row["operation"] == "skip"
     }
-    import_rows = [row for index, row in enumerate(rows) if index not in duplicate_indexes]
+    update_indexes = {
+        index for index, row in enumerate(rows_preview)
+        if row["operation"] == "update"
+    }
+    import_rows = [
+        row for index, row in enumerate(rows)
+        if index not in duplicate_indexes and index not in update_indexes
+    ]
+    updated = 0
     if job.target == "companies":
-        db.add_all([Company(org_id=org.id, name=row["name"], website=row.get("website"), industry=row.get("industry"), notes=row.get("notes")) for row in import_rows])
+        companies = await db.scalars(select(Company).where(Company.org_id == org.id))
+        companies_by_key = {
+            key: company for company in companies
+            if (key := _row_key("companies", {"name": company.name}))
+        }
+        for index, row in enumerate(rows):
+            key = _row_key("companies", row)
+            if index in duplicate_indexes or key is None:
+                continue
+            company = companies_by_key.get(key)
+            if company is not None:
+                changed = _company_update_fields(company, row)
+                for field in changed:
+                    setattr(company, field, row[field].strip())
+                if changed:
+                    updated += 1
+                continue
+            company = Company(
+                org_id=org.id,
+                name=row["name"],
+                website=row.get("website") or None,
+                industry=row.get("industry") or None,
+                notes=row.get("notes") or None,
+            )
+            db.add(company)
+            await db.flush()
+            companies_by_key[key] = company
     elif job.target == "contacts":
         for row in import_rows:
             company_id = None
@@ -271,6 +340,7 @@ async def apply_import(job_id: str, org: Organization = Depends(get_current_tena
         "id": job.id,
         "status": job.status,
         "imported": len(import_rows),
+        "updated": updated,
         "skipped_duplicates": len(duplicate_indexes),
         "row_count": len(rows),
         "duplicate_count": len(duplicate_indexes),
