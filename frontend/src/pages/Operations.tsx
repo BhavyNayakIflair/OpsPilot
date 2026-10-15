@@ -204,22 +204,6 @@ function useEditorScroll() {
   return { ref, focusEditor, className };
 }
 
-/** Becomes true right after first paint so CSS width transitions can run from their empty state. */
-function useAfterPaint() {
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    let inner = 0;
-    const outer = requestAnimationFrame(() => {
-      inner = requestAnimationFrame(() => setReady(true));
-    });
-    return () => {
-      cancelAnimationFrame(outer);
-      cancelAnimationFrame(inner);
-    };
-  }, []);
-  return ready;
-}
-
 const opsStyles = `
 @keyframes ops-rise {
   from { opacity: 0; transform: translateY(14px); }
@@ -529,24 +513,31 @@ const formatEntryDate = (value: string) => {
 
 
 const BudgetBar = ({ usedMinutes, budgetMinutes }: { usedMinutes: number; budgetMinutes: number }) => {
-  const ready = useAfterPaint();
-  const pct = Math.min(100, (usedMinutes / budgetMinutes) * 100);
+  const usagePct = budgetMinutes > 0 ? (usedMinutes / budgetMinutes) * 100 : 0;
+  const pct = Math.min(100, Math.max(0, usagePct));
   const overBudget = usedMinutes > budgetMinutes;
   return (
     <div className="w-full max-w-md mt-2">
       <div className="flex justify-between text-[11px] text-semantic-text-muted mb-1">
         <span>Budget usage</span>
         <span className={cn('tabular-nums', overBudget && 'font-semibold text-semantic-danger')}>
-          {(usedMinutes / 60).toFixed(1)} / {(budgetMinutes / 60).toFixed(1)}h · {Math.round((usedMinutes / budgetMinutes) * 100)}%
+          {(usedMinutes / 60).toFixed(1)} / {(budgetMinutes / 60).toFixed(1)}h · {Math.round(usagePct)}%
         </span>
       </div>
-      <div className="h-2 w-full rounded-full bg-semantic-surface-muted overflow-hidden">
+      <div
+        className="h-2 w-full rounded-full bg-semantic-surface-muted overflow-hidden"
+        role="progressbar"
+        aria-label="Budget usage"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pct)}
+      >
         <div
           className={cn(
             'h-full rounded-full transition-[width] duration-1000 ease-out',
-            overBudget ? 'bg-semantic-danger' : pct >= 80 ? 'bg-semantic-warning' : 'bg-semantic-accent/70'
+            overBudget ? 'bg-semantic-danger' : pct >= 80 ? 'bg-semantic-warning' : 'bg-semantic-accent'
           )}
-          style={{ width: `${ready ? pct : 0}%` }}
+          style={{ width: `${pct}%` }}
         />
       </div>
     </div>
@@ -1027,6 +1018,78 @@ export function ProjectsPage() {
 /* Timesheets                                                          */
 /* ------------------------------------------------------------------ */
 
+function renderWorkDescriptionInline(text: string): ReactNode[] {
+  return text.split(/(\*\*.+?\*\*|`[^`]+`|\*[^*]+\*)/g).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index} className="font-semibold text-semantic-text">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={index} className="rounded bg-semantic-surface-muted px-1.5 py-0.5 font-mono text-[0.9em]">{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
+}
+
+function WorkDescription({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/);
+  const blocks: ReactNode[] = [];
+
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index].trim();
+    if (!line) {
+      index += 1;
+      continue;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      const Heading = `h${heading[1].length}` as 'h1' | 'h2' | 'h3';
+      blocks.push(
+        <Heading key={index} className="mt-5 first:mt-0 text-base font-bold text-semantic-text">
+          {renderWorkDescriptionInline(heading[2])}
+        </Heading>
+      );
+      index += 1;
+      continue;
+    }
+
+    const listItem = /^([-*]|\d+\.)\s+(.+)$/.exec(line);
+    if (listItem) {
+      const ordered = listItem[1] !== '-' && listItem[1] !== '*';
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = /^([-*]|\d+\.)\s+(.+)$/.exec(lines[index].trim());
+        if (!item || (item[1] !== '-' && item[1] !== '*') !== ordered) break;
+        items.push(item[2]);
+        index += 1;
+      }
+      const List = ordered ? 'ol' : 'ul';
+      blocks.push(
+        <List key={blocks.length} className={`my-3 space-y-1.5 pl-6 ${ordered ? 'list-decimal' : 'list-disc'}`}>
+          {items.map((item, itemIndex) => <li key={itemIndex} className="pl-1">{renderWorkDescriptionInline(item)}</li>)}
+        </List>
+      );
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+/.test(lines[index].trim()) && !/^([-*]|\d+\.)\s+/.test(lines[index].trim())) {
+      paragraph.push(lines[index].trim());
+      index += 1;
+    }
+    blocks.push(
+      <p key={blocks.length} className="my-3 first:mt-0 last:mb-0 leading-7 text-semantic-text">
+        {renderWorkDescriptionInline(paragraph.join(' '))}
+      </p>
+    );
+  }
+
+  return <div>{blocks.length ? blocks : <p className="text-semantic-text-muted">No description provided.</p>}</div>;
+}
+
 export function TimesheetsPage() {
   const { user } = useAuth();
   const toast = useToast();
@@ -1052,6 +1115,18 @@ export function TimesheetsPage() {
   });
   const [sortKey, setSortKey] = useState<string | null>('entry_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [viewingEntry, setViewingEntry] = useState<Entry | null>(null);
+  const closeDescriptionRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!viewingEntry) return;
+    closeDescriptionRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setViewingEntry(null);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [viewingEntry]);
 
   // Fix: no longer depends on `projectId`. Previously, choosing a project in the form recreated this
   // callback and triggered a full reload (table loading flash) every time the project selection changed.
@@ -1237,7 +1312,14 @@ export function TimesheetsPage() {
       role: 'primary',
       render: (r) => (
         <div className="min-w-0">
-          <div className="break-words font-semibold text-semantic-text">{r.description}</div>
+          <button
+            type="button"
+            className="block w-full truncate text-left font-semibold text-semantic-text hover:text-semantic-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-semantic-accent"
+            title="View full work description"
+            onClick={() => setViewingEntry(r)}
+          >
+            {r.description}
+          </button>
           <div className="mt-0.5 truncate text-xs text-semantic-text-muted">{projectName(r.project_id)}</div>
         </div>
       ),
@@ -1495,6 +1577,47 @@ export function TimesheetsPage() {
           emptyState={<EmptyState icon={Inbox} title="No time entries" description="Log your first entry using the form above." />}
         />
       </div>
+      {viewingEntry && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setViewingEntry(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="work-description-title"
+            className="flex max-h-[min(85vh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface shadow-ui-xl"
+          >
+            <header className="flex items-start justify-between gap-4 border-b border-semantic-border px-6 py-5">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wider text-semantic-text-muted">Work description</p>
+                <h2 id="work-description-title" className="mt-1 truncate text-xl font-bold text-semantic-text">
+                  {projectName(viewingEntry.project_id)}
+                </h2>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-semantic-text-muted">
+                  <span>{employeeName(viewingEntry)}</span>
+                  <span>{formatEntryDate(viewingEntry.entry_date)}</span>
+                  <span>{(viewingEntry.minutes / 60).toFixed(1)}h</span>
+                </div>
+              </div>
+              <button
+                ref={closeDescriptionRef}
+                type="button"
+                aria-label="Close work description"
+                className="shrink-0 rounded-ui-lg p-2 text-semantic-text-muted transition hover:bg-semantic-surface-muted hover:text-semantic-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-semantic-accent"
+                onClick={() => setViewingEntry(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <div className="overflow-y-auto px-6 py-5">
+              <WorkDescription text={viewingEntry.description} />
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
