@@ -162,7 +162,8 @@ def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
             flags.append("Discount exceeds the 15% review threshold.")
         lead, _card = await _lead_and_rate_card(db, state)
         prompt = (
-            "Review this quote for missing rates, discounts above 15%, and arithmetic errors. "
+            "Review this quote for missing rates and arithmetic errors. Discount threshold checks are "
+            "performed separately in code; do not report discount-related flags. "
             "Return totals_match and concise flags only.\n"
             f"Lead: {lead.title}; currency={payload.currency}; subtotal_cents={subtotal}; "
             f"expected_total_cents={expected_total}; provided_total_cents={expected_total}; "
@@ -181,7 +182,7 @@ def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
                 review = QuoteSelfReview.model_validate(review)
             if not review.totals_match:
                 flags.append("Model self-review found a total mismatch.")
-            flags.extend(review.flags)
+            flags.extend(flag for flag in review.flags if "discount" not in flag.casefold())
         except Exception as exc:
             flags.append(f"Model self-review did not complete: {exc}")
         flags = list(dict.fromkeys(flags))

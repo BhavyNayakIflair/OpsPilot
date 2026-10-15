@@ -104,12 +104,6 @@ async def generate_quote_draft(db: AsyncSession, org: Organization, lead: Lead,
         raise ProviderError(f"AI draft currency must be {currency}")
     if requested_lines and len(draft.line_items) != len(requested_lines):
         raise ProviderError("AI draft must preserve every requested line item")
-    # Rule R5: Compute business totals strictly in code with Decimal arithmetic
-    expected_total = sum(
-        int((Decimal(str(item.quantity)) * Decimal(str(item.unit_price_cents))).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        for item in draft.line_items
-    )
-    draft.total_cents = expected_total
     allowed_prices = {0}
     if rate_card and rate_card.default_rate_cents > 0:
         allowed_prices.add(rate_card.default_rate_cents)
@@ -117,10 +111,42 @@ async def generate_quote_draft(db: AsyncSession, org: Organization, lead: Lead,
         allowed_prices.update(item["unit_price_cents"] for item in example["line_items"])
     allowed_prices.update(item["unit_price_cents"] for item in requested_lines
                           if item.get("unit_price_cents") is not None)
-    if any(item.unit_price_cents not in allowed_prices for item in draft.line_items):
-        raise ProviderError("AI draft used a price not present in the request, rate card, or accepted quote examples")
+    effective_lines = []
+    price_review_assumptions = []
+    fallback_price = rate_card.default_rate_cents if rate_card and rate_card.default_rate_cents > 0 else 0
+    for index, item in enumerate(draft.line_items):
+        requested = requested_lines[index] if index < len(requested_lines) else {}
+        requested_price = requested.get("unit_price_cents")
+        unit_price_cents = requested_price if requested_price is not None else item.unit_price_cents
+        if requested_price is None and unit_price_cents not in allowed_prices:
+            unit_price_cents = fallback_price
+            if fallback_price:
+                price_review_assumptions.append(
+                    f"AI suggested an unapproved price for '{item.description}'; "
+                    "the rate-card default was used instead."
+                )
+            else:
+                price_review_assumptions.append(
+                    f"AI suggested an unapproved price for '{item.description}'; "
+                    "the line was set to zero and needs human pricing."
+                )
+        effective_lines.append({
+            "description": requested.get("description", item.description),
+            "quantity": requested.get("quantity", item.quantity),
+            "unit_price_cents": unit_price_cents,
+            "rate_card_id": rate_card.id if rate_card else None,
+        })
 
-    assumptions = list(draft.assumptions)
+    # Rule R5: Compute business totals strictly in code with Decimal arithmetic.
+    expected_total = sum(
+        int((Decimal(str(line["quantity"])) * Decimal(str(line["unit_price_cents"]))).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP
+        ))
+        for line in effective_lines
+    )
+    draft.total_cents = expected_total
+
+    assumptions = list(draft.assumptions) + price_review_assumptions
     if allowed_prices == {0}:
         assumptions.append("No approved price was available; zero-priced lines need human pricing before use.")
     quote_data = QuoteCreate(
@@ -128,12 +154,7 @@ async def generate_quote_draft(db: AsyncSession, org: Organization, lead: Lead,
         rate_card_id=rate_card.id if rate_card else None,
         lead_id=lead.id, currency=currency, discount_bps=request.get("discount_bps", 0), tax_bps=request.get("tax_bps", 0),
         terms=request.get("terms") if request.get("terms") is not None else draft.terms,
-        line_items=[{"description": (requested_lines[index]["description"] if index < len(requested_lines) else item.description),
-                     "quantity": (requested_lines[index]["quantity"] if index < len(requested_lines) else item.quantity),
-                     "unit_price_cents": (requested_lines[index].get("unit_price_cents")
-                                          if index < len(requested_lines) and requested_lines[index].get("unit_price_cents") is not None
-                                          else item.unit_price_cents),
-                     "rate_card_id": rate_card.id if rate_card else None} for index, item in enumerate(draft.line_items)],
+        line_items=effective_lines,
     )
     evidence = {"accepted_quote_count": len(examples), "knowledge_chunk_count": len(retrieved_knowledge),
                 "price_sources": sorted(allowed_prices)}
