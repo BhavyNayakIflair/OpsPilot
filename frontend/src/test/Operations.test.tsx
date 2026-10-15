@@ -79,6 +79,26 @@ describe('ApprovalsPage', () => {
     expect(await screen.findByText('$137.03')).toBeInTheDocument();
   });
 
+  it('renders markdown in timesheet approval descriptions instead of showing syntax', async () => {
+    vi.mocked(apiRequest).mockImplementation(async (endpoint: string) => {
+      if (endpoint === '/workflows/approvals') {
+        return [{
+          id: 't2',
+          entity_type: 'timesheet',
+          label: '**SOD (Start of Day)**\n## Project: OpsPilot\n- Implement invoice billing',
+          created_at: '2026-01-05T10:00:00Z',
+        }] as never;
+      }
+      return [] as never;
+    });
+
+    renderWithRouter(<ApprovalsPage />);
+    expect(await screen.findByText('SOD (Start of Day)')).toBeInTheDocument();
+    expect(screen.getByText('Project: OpsPilot')).toBeInTheDocument();
+    expect(screen.getByText('Implement invoice billing')).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*|^##|^- /)).not.toBeInTheDocument();
+  });
+
   it('filters the queue by entity type using the API entity_type values', async () => {
     renderWithRouter(<ApprovalsPage />);
     await screen.findByText('Homepage design work');

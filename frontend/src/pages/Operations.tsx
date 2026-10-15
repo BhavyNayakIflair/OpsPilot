@@ -567,6 +567,48 @@ function quotePreviewTotalCents(preview: NonNullable<ApprovalItem['quote_preview
   return discounted + Math.floor((discounted * (preview.tax_bps || 0) + 5000) / 10000);
 }
 
+function renderApprovalInlineMarkdown(text: string): ReactNode {
+  return text.split(/(\*\*.+?\*\*|__.+?__|`.+?`)/g).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('__') && part.endsWith('__')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={index} className="rounded bg-semantic-surface-muted px-1">{part.slice(1, -1)}</code>;
+    }
+    return part;
+  });
+}
+
+function ApprovalDescription({ text }: { text: string }) {
+  return (
+    <div className="space-y-1 break-words">
+      {text.split(/\r?\n/).map((line, index) => {
+        const content = line.trim();
+        if (!content) return <div key={index} className="h-1" />;
+
+        const heading = content.match(/^#{1,6}\s+(.+?)\s*#*$/);
+        if (heading) {
+          return <p key={index} className="font-semibold">{renderApprovalInlineMarkdown(heading[1])}</p>;
+        }
+
+        const listItem = content.match(/^(?:[-+*]|\d+[.)])\s+(.+)$/);
+        if (listItem) {
+          return (
+            <p key={index} className="ml-5 list-item list-disc">
+              {renderApprovalInlineMarkdown(listItem[1])}
+            </p>
+          );
+        }
+
+        return <p key={index}>{renderApprovalInlineMarkdown(content)}</p>;
+      })}
+    </div>
+  );
+}
+
 const CATEGORY_OPTIONS_EXPENSE = [
   { value: 'general', label: 'General' },
   { value: 'travel', label: 'Travel' },
@@ -4475,7 +4517,13 @@ export function ApprovalsPage() {
                       <Badge variant={entityBadgeVariant(item.entity_type)} size="sm">
                         {entityLabel(item.entity_type)}
                       </Badge>
-                      <p className="font-semibold text-semantic-text text-base">{item.label}</p>
+                      {item.entity_type === 'timesheet' ? (
+                        <div className="font-semibold text-semantic-text text-base">
+                          <ApprovalDescription text={item.label} />
+                        </div>
+                      ) : (
+                        <p className="font-semibold text-semantic-text text-base">{item.label}</p>
+                      )}
                       {item.reason && (
                         <Alert variant="warning" title="Review flags">
                           {item.reason}
