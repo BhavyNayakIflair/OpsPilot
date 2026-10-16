@@ -3516,9 +3516,9 @@ export function DocumentsPage() {
                       <h3 className="text-sm font-semibold text-semantic-text">Answer</h3>
                       {knowledgeAnswer.degraded && <Badge variant="warning">Limited synthesis</Badge>}
                     </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-semantic-text">
-                      {knowledgeAnswer.answer}
-                    </p>
+                    <div className="mt-2 text-sm leading-6 text-semantic-text">
+                      <WorkDescription text={knowledgeAnswer.answer} />
+                    </div>
                   </article>
                   {knowledgeAnswer.citations.length > 0 && (
                     <div className="space-y-2">

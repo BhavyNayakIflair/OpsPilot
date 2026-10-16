@@ -98,3 +98,23 @@ async def test_rag_answer_uses_provider_and_does_not_dump_full_document(db_sessi
     assert full_document not in result["answer"]
     assert result["citations"]
     assert result["citations"][0]["document_title"] == "Master services agreement"
+
+
+class UnavailableAnswerProvider(AnsweringProvider):
+    def generate(self, prompt, system="", temperature=0.2, response_model=None, **kwargs):
+        raise RuntimeError("Synthesis unavailable")
+
+
+@pytest.mark.asyncio
+async def test_degraded_rag_answer_preserves_markdown_line_breaks(db_session):
+    provider = UnavailableAnswerProvider()
+    content = "# Payment terms\n\n## Due date\nInvoices are due within **30 days**."
+    org, document = await _document(db_session, "Payment policy", content)
+    await ingest_document(db_session, document, provider)
+    await db_session.commit()
+
+    result = await answer_rag_question(org.id, "What are the payment terms?", db_session, provider)
+
+    assert result["degraded"] is True
+    assert result["answer"].startswith("# Payment terms\n## Due date\n")
+    assert "**30 days**" in result["answer"]

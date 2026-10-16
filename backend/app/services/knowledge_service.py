@@ -200,6 +200,8 @@ async def answer_rag_question(
     system_prompt = (
         "You are an assistant answering questions about company internal documentation. "
         "Write a concise answer (2–6 sentences) to the user's question. "
+        "Use standard Markdown formatting when it improves readability; put each heading and list item on its own line, "
+        "and never place Markdown heading markers in the middle of a paragraph. "
         "Do not paste or reproduce entire documents, files, or source chunks. "
         "Base the answer strictly on the provided context chunks. "
         "Every factual claim must cite its source chunk using [Chunk <id>]. "
@@ -230,7 +232,7 @@ async def answer_rag_question(
     except Exception as exc:
         # Degraded mode: short extractive answer from the top chunk, never the full file.
         top = results[0]
-        snippet = " ".join(top.chunk.content.split())
+        snippet = "\n".join(line.strip() for line in top.chunk.content.splitlines() if line.strip())
         if len(snippet) > 280:
             snippet = snippet[:277].rsplit(" ", 1)[0] + "…"
         return {

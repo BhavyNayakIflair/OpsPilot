@@ -490,6 +490,32 @@ describe('DocumentsPage', () => {
     fireEvent.click(screen.getByText(/^write$/i));
     expect(screen.getByPlaceholderText(/Write or paste your document here/)).toHaveValue('# Invoice Policy\n\nPay within **30 days**.');
   });
+
+  it('renders Markdown formatting in AI answers for documents and SOWs', async () => {
+    vi.mocked(apiRequest).mockImplementation(async (endpoint: string) => {
+      if (endpoint === '/documents') return [] as never;
+      if (endpoint === '/knowledge/ask') {
+        return {
+          answer: '# Payment terms\n\n## Due date\nInvoices are due within **30 days**.\n\n- Send an invoice',
+          citations: [],
+          degraded: false,
+        } as never;
+      }
+      return [] as never;
+    });
+
+    renderWithRouter(<DocumentsPage />);
+    fireEvent.change(await screen.findByPlaceholderText(/What are our standard payment terms/), {
+      target: { value: 'What are the payment terms?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask with AI' }));
+
+    expect(await screen.findByRole('heading', { name: 'Payment terms' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Due date' })).toBeInTheDocument();
+    expect(screen.getByText('30 days').tagName).toBe('STRONG');
+    expect(screen.getByRole('listitem')).toHaveTextContent('Send an invoice');
+    expect(screen.queryByText(/^\s*#{1,3}\s/)).not.toBeInTheDocument();
+  });
 });
 
 describe('PeoplePage & LeaveWidget (Characterization)', () => {
