@@ -65,6 +65,7 @@ button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 ::selection { background: #dfe4ff; }
+.required-indicator::before { content: '*'; }
 
 @layer components {
   .page-shell { @apply mx-auto w-full max-w-[1440px] space-y-6; }

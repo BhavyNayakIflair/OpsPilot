@@ -20,6 +20,7 @@ import {
 import { useLottie } from 'lottie-react';
 import { useAuth } from '../context/AuthContext';
 import transferAnimation from '../assets/lottie/isometric-transfer.json';
+import { RequiredForm, RequiredIndicator } from '../components/ui/RequiredForm';
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
 
@@ -404,11 +405,11 @@ export const Login: React.FC = () => {
 
           {/* ==================== 1. LOGIN / REGISTER VIEW ==================== */}
           {(mode === 'login' || mode === 'register') && (
-            <form className="space-y-4" onSubmit={handleLoginSubmit}>
+            <RequiredForm className="space-y-4" onSubmit={handleLoginSubmit}>
               {mode === 'register' && (
                 <>
                   <div>
-                    <label className="block text-xs font-medium text-slate-300">Full Name</label>
+                    <label className="block text-xs font-medium text-slate-300">Full Name<RequiredIndicator /></label>
                     <input
                       type="text"
                       required
@@ -421,6 +422,7 @@ export const Login: React.FC = () => {
                   <div>
                     <label className="block text-xs font-medium text-slate-300">
                       Company / Organization Name
+                      <RequiredIndicator />
                     </label>
                     <input
                       type="text"
@@ -435,7 +437,7 @@ export const Login: React.FC = () => {
               )}
 
               <div>
-                <label className="block text-xs font-medium text-slate-300">Work Email</label>
+                <label className="block text-xs font-medium text-slate-300">Work Email<RequiredIndicator /></label>
                 <input
                   type="email"
                   required
@@ -448,7 +450,7 @@ export const Login: React.FC = () => {
 
               <div>
                 <div className="flex items-center justify-between">
-                  <label className="block text-xs font-medium text-slate-300">Password</label>
+                  <label className="block text-xs font-medium text-slate-300">Password<RequiredIndicator /></label>
                   {mode === 'login' && (
                     <button
                       type="button"
@@ -489,7 +491,7 @@ export const Login: React.FC = () => {
                   'Sign In to Workspace'
                 )}
               </button>
-            </form>
+            </RequiredForm>
           )}
 
           {/* ==================== 2. FORGOT PASSWORD VIEW ==================== */}
@@ -576,10 +578,11 @@ export const Login: React.FC = () => {
                   </button>
                 </div>
               ) : (
-                <form className="space-y-4" onSubmit={handleForgotPasswordSubmit}>
+                <RequiredForm className="space-y-4" onSubmit={handleForgotPasswordSubmit}>
                   <div>
                     <label className="block text-xs font-medium text-slate-300 mb-1">
                       Registered Work Email
+                      <RequiredIndicator />
                     </label>
                     <div className="relative">
                       <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
@@ -610,7 +613,7 @@ export const Login: React.FC = () => {
 
                   <button
                     type="submit"
-                    disabled={loading || !forgotEmail.trim()}
+                    disabled={loading}
                     className="w-full mt-2 py-2.5 px-4 rounded-lg bg-sky-500 hover:bg-sky-400 text-sm font-semibold text-white shadow-md shadow-sky-500/20 focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
                   >
                     {loading ? (
@@ -638,7 +641,7 @@ export const Login: React.FC = () => {
                       Remember your password? <span className="text-sky-400">Sign in</span>
                     </button>
                   </div>
-                </form>
+                </RequiredForm>
               )}
             </div>
           )}
@@ -672,7 +675,7 @@ export const Login: React.FC = () => {
                   </button>
                 </div>
               ) : (
-                <form className="space-y-4" onSubmit={handleResetPasswordSubmit}>
+                <RequiredForm className="space-y-4" onSubmit={handleResetPasswordSubmit}>
                   {/* Verified user badge */}
                   {verifiedEmail && (
                     <div className="p-2.5 rounded-lg bg-sky-950/40 border border-sky-800/60 flex items-center justify-between text-xs">
@@ -694,6 +697,7 @@ export const Login: React.FC = () => {
                   <div>
                     <label className="block text-xs font-medium text-slate-300 mb-1">
                       Reset Token
+                      <RequiredIndicator />
                     </label>
                     <input
                       type="text"
@@ -709,6 +713,7 @@ export const Login: React.FC = () => {
                   <div>
                     <label className="block text-xs font-medium text-slate-300 mb-1">
                       New Password
+                      <RequiredIndicator />
                     </label>
                     <div className="relative">
                       <input
@@ -762,6 +767,7 @@ export const Login: React.FC = () => {
                   <div>
                     <label className="block text-xs font-medium text-slate-300 mb-1">
                       Confirm New Password
+                      <RequiredIndicator />
                     </label>
                     <div className="relative">
                       <input
@@ -839,7 +845,7 @@ export const Login: React.FC = () => {
                       Need a new reset link? <span className="text-sky-400">Request another</span>
                     </button>
                   </div>
-                </form>
+                </RequiredForm>
               )}
             </div>
           )}

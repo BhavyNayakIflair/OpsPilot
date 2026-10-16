@@ -16,6 +16,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { DataTable } from '../components/ui/DataTable';
 import type { DataTableColumn, DataTableFilterDef } from '../components/ui/DataTable';
 import AIProgress from '../components/ui/AIProgress';
+import { RequiredForm } from '../components/ui/RequiredForm';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -41,7 +42,7 @@ type KnowledgeAskResult = {
 
 const fieldControl = 'rounded-ui-xl px-3.5 py-2 text-sm border border-semantic-border bg-semantic-surface text-semantic-text placeholder:text-semantic-text-muted focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-semantic-border w-full';
 
-function ProjectDropdown({ projects, value, onChange }: { projects: Project[]; value: string; onChange: (id: string) => void }) {
+function ProjectDropdown({ projects, value, onChange, required = false }: { projects: Project[]; value: string; onChange: (id: string) => void; required?: boolean }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -85,7 +86,8 @@ function ProjectDropdown({ projects, value, onChange }: { projects: Project[]; v
         aria-haspopup="listbox"
         aria-controls={listboxId}
         aria-expanded={open}
-        aria-required="true"
+        aria-required={required || undefined}
+        aria-valuetext={required ? selected?.name ?? '' : undefined}
         aria-activedescendant={open && filteredProjects.length ? `${listboxId}-option-${activeIndex}` : undefined}
         disabled={!projects.length}
         onClick={() => {
@@ -837,7 +839,7 @@ export function ProjectsPage() {
             {editing && <Badge variant="warning">Editing</Badge>}
           </CardHeader>
           <CardContent>
-            <form onSubmit={(e) => void saveProject(e)} className="ops-form ops-form--proj">
+            <RequiredForm onSubmit={(e) => void saveProject(e)} className="ops-form ops-form--proj">
               <label className="ops-fullbelow text-xs font-semibold text-semantic-text-muted">
                 Project name
                 <input className={`${fieldControl} mt-1.5`} required placeholder="e.g. Client portal rollout" value={name} onChange={(e) => setName(e.target.value)} />
@@ -858,7 +860,7 @@ export function ProjectsPage() {
                   </Button>
                 )}
               </div>
-            </form>
+            </RequiredForm>
           </CardContent>
         </Card>
       </div>
@@ -1025,7 +1027,7 @@ export function ProjectsPage() {
                           ))
                         )}
                       </div>
-                      <form
+                      <RequiredForm
                         className="flex flex-col gap-2 sm:flex-row"
                         onSubmit={(e) => {
                           e.preventDefault();
@@ -1036,15 +1038,19 @@ export function ProjectsPage() {
                           }
                         }}
                       >
-                        <input
-                          aria-label="New task title"
-                          className={fieldControl}
-                          placeholder="Describe a task to add to this project"
-                          value={newTaskTitle[project.id] || ''}
-                          onChange={(e) => setNewTaskTitle((old) => ({ ...old, [project.id]: e.target.value }))}
-                        />
+                        <label className="flex-1 text-xs font-semibold text-semantic-text-muted">
+                          Task title
+                          <input
+                            aria-label="New task title"
+                            className={`${fieldControl} mt-1.5`}
+                            required
+                            placeholder="Describe a task to add to this project"
+                            value={newTaskTitle[project.id] || ''}
+                            onChange={(e) => setNewTaskTitle((old) => ({ ...old, [project.id]: e.target.value }))}
+                          />
+                        </label>
                         <Button type="submit">Add task</Button>
-                      </form>
+                      </RequiredForm>
                     </CardContent>
                   )}
                 </Card>
@@ -1505,7 +1511,7 @@ export function TimesheetsPage() {
             {editingId && <Badge variant="warning">Editing</Badge>}
           </CardHeader>
           <CardContent>
-            <form onSubmit={(e) => void add(e)} className="space-y-5">
+            <RequiredForm onSubmit={(e) => void add(e)} className="space-y-5">
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                 <label className="block min-w-0 text-sm font-medium text-semantic-text">
                   Project
@@ -1513,6 +1519,7 @@ export function TimesheetsPage() {
                     projects={projects}
                     value={projectId}
                     onChange={setProjectId}
+                    required
                   />
                 </label>
 
@@ -1619,13 +1626,12 @@ export function TimesheetsPage() {
 
                   <Button
                     type="submit"
-                    disabled={!projects.length || !projectId}
                   >
                     {editingId ? 'Save changes' : 'Log time'}
                   </Button>
                 </div>
               </div>
-            </form>
+            </RequiredForm>
           </CardContent>
         </Card>
       </div>
@@ -1901,7 +1907,7 @@ export function PeoplePage() {
               {editing && <Badge variant="warning">Editing</Badge>}
             </CardHeader>
             <CardContent>
-              <form onSubmit={(e) => void add(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+              <RequiredForm onSubmit={(e) => void add(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
                 <label className="text-xs font-semibold text-semantic-text-muted">
                   Full name
                   <input className={`${fieldControl} mt-1.5`} required placeholder="Team member name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -1930,7 +1936,7 @@ export function PeoplePage() {
                     </Button>
                   )}
                 </div>
-              </form>
+              </RequiredForm>
             </CardContent>
           </Card>
         </div>
@@ -2051,7 +2057,7 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
         </CardHeader>
         <CardContent className="space-y-4">
           {error && <Alert variant="danger">{error}</Alert>}
-          <form onSubmit={(e) => void add(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <RequiredForm onSubmit={(e) => void add(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {!editing && (
               <label className="text-xs font-semibold text-semantic-text-muted">
                 Team member
@@ -2074,14 +2080,14 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
               <input className={`${fieldControl} mt-1.5`} placeholder="Add a short note" value={reason} onChange={(e) => setReason(e.target.value)} />
             </label>
             <div className="flex items-end gap-2">
-              <Button type="submit" disabled={!editing && !employees.length}>{editing ? 'Save changes' : 'Submit request'}</Button>
+              <Button type="submit">{editing ? 'Save changes' : 'Submit request'}</Button>
               {editing && (
                 <Button type="button" variant="secondary" onClick={() => { setEditing(null); setStart(''); setEnd(''); setReason(''); }}>
                   Cancel
                 </Button>
               )}
             </div>
-          </form>
+          </RequiredForm>
 
           {loading ? (
             <div className="space-y-2">
@@ -2408,10 +2414,10 @@ export function InvoicingPage() {
             {editing && <Badge variant="warning">Editing draft</Badge>}
           </CardHeader>
           <CardContent>
-            <form onSubmit={(e) => void saveInvoice(e)} className="min-w-0 space-y-6">
+            <RequiredForm onSubmit={(e) => void saveInvoice(e)} className="min-w-0 space-y-6">
               <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
-                  Client name *
+                  Client name
                   <input className={`${fieldControl} mt-1.5 w-full min-w-0`} required maxLength={160} placeholder="Customer or company" value={client} onChange={(e) => setClient(e.target.value)} />
                 </label>
                 <label className="min-w-0 text-xs font-semibold text-semantic-text-muted">
@@ -2510,7 +2516,7 @@ export function InvoicingPage() {
                   <Button type="submit" disabled={saving} loading={saving}>{saving ? 'Saving…' : editing ? 'Save invoice changes' : 'Create draft invoice'}</Button>
                 </div>
               </div>
-            </form>
+            </RequiredForm>
           </CardContent>
         </Card>
       </div>
@@ -2913,7 +2919,7 @@ export function ExpensesPage() {
           </CardHeader>
 
           <CardContent>
-            <form onSubmit={(e) => void create(e)} className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
+            <RequiredForm onSubmit={(e) => void create(e)} className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
               <label className="block min-w-0 text-sm font-medium text-semantic-text">
                 Vendor
                 <input
@@ -3000,7 +3006,7 @@ export function ExpensesPage() {
                   </Button>
                 )}
               </div>
-            </form>
+            </RequiredForm>
           </CardContent>
         </Card>
       </div>
@@ -3400,7 +3406,7 @@ export function DocumentsPage() {
               {editingId && <Badge variant="warning">Editing</Badge>}
             </CardHeader>
             <CardContent>
-              <form onSubmit={(e) => void save(e)} className="grid gap-4">
+              <RequiredForm onSubmit={(e) => void save(e)} className="grid gap-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="text-xs font-semibold text-semantic-text-muted">
                     Document title
@@ -3415,7 +3421,12 @@ export function DocumentsPage() {
                 </div>
                 <label className="text-xs font-semibold text-semantic-text-muted">
                   Document text
-                  <div className="mt-1.5 overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface focus-within:ring-4 focus-within:ring-semantic-border">
+                  <div
+                    className="mt-1.5 overflow-hidden rounded-ui-2xl border border-semantic-border bg-semantic-surface focus-within:ring-4 focus-within:ring-semantic-border"
+                    aria-required={documentEditorMode === 'preview' || undefined}
+                    aria-valuetext={documentEditorMode === 'preview' ? content : undefined}
+                    tabIndex={documentEditorMode === 'preview' ? -1 : undefined}
+                  >
                     <div className="flex items-center gap-1 border-b border-semantic-border bg-semantic-surface-muted/50 px-3 py-2">
                       {(['write', 'preview'] as const).map((mode) => (
                         <button
@@ -3466,7 +3477,7 @@ export function DocumentsPage() {
                   )}
                   <Button type="submit">{editingId ? 'Save changes' : 'Save document'}</Button>
                 </div>
-              </form>
+              </RequiredForm>
             </CardContent>
           </Card>
         </div>
@@ -3483,20 +3494,21 @@ export function DocumentsPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <form onSubmit={(e) => void semanticSearch(e)} className="flex flex-col gap-2 sm:flex-row">
+              <RequiredForm onSubmit={(e) => void semanticSearch(e)} className="flex flex-col gap-2 sm:flex-row">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-semantic-text-muted" />
                   <input
                     className={`${fieldControl} pl-9`}
+                    required
                     placeholder="e.g. What are our standard payment terms?"
                     value={semanticQuery}
                     onChange={(e) => setSemanticQuery(e.target.value)}
                   />
                 </div>
-                <Button type="submit" loading={searching} disabled={!semanticQuery.trim()}>
+                <Button type="submit" loading={searching}>
                   {searching ? 'Asking…' : 'Ask with AI'}
                 </Button>
-              </form>
+              </RequiredForm>
               {knowledgeAnswer && knowledgeAnswer.answer !== 'not found in documents' && (
                 <div className="space-y-3">
                   <article className="ops-pop rounded-ui-xl border border-semantic-accent/20 bg-semantic-accent-soft/40 p-4">
@@ -3803,7 +3815,7 @@ export function MigrationPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <form onSubmit={(e) => void runDry(e)} className="grid gap-4 sm:grid-cols-[1fr_2fr_auto]">
+            <RequiredForm onSubmit={(e) => void runDry(e)} className="grid gap-4 sm:grid-cols-[1fr_2fr_auto]">
               <label className="text-xs font-semibold text-semantic-text-muted">
                 Records to import
                 <select className={`${fieldControl} mt-1.5`} value={target} onChange={(e) => setTarget(e.target.value)}>
@@ -3816,10 +3828,10 @@ export function MigrationPage() {
                 CSV file
                 <input className={`${fieldControl} mt-1.5 file:mr-3 file:py-1.5 file:px-3 file:rounded-ui-lg file:border-0 file:text-xs file:font-semibold file:bg-semantic-accent file:text-white hover:file:bg-semantic-accent-hover`} required type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
               </label>
-              <Button type="submit" className="self-end" loading={busy} disabled={!file}>
+              <Button type="submit" className="self-end" loading={busy}>
                 {busy ? 'Checking…' : 'Preview CSV'}
               </Button>
-            </form>
+            </RequiredForm>
           </CardContent>
         </Card>
       </div>

@@ -5,6 +5,7 @@ import { twMerge } from 'tailwind-merge';
 import { Card, CardHeader, CardContent, PageHeader, Button, Badge } from '../components/ui/';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/toast';
+import { RequiredForm } from '../components/ui/RequiredForm';
 import { apiRequest } from '../lib/api';
 import type { Locale, Organization, RoleType } from '../types/auth';
 import { supportedLocales, useTranslation, type TranslationKey } from '../i18n';
@@ -158,7 +159,7 @@ export const Settings: React.FC = () => {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardContent>
-            <form onSubmit={(e) => void saveOrganization(e)} className="space-y-4">
+            <RequiredForm onSubmit={(e) => void saveOrganization(e)} className="space-y-4">
               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-semantic-text-muted">
                 <Shield className="w-4 h-4 text-semantic-accent" />
                 <span>{t('organizationProfile')}</span>
@@ -229,14 +230,14 @@ export const Settings: React.FC = () => {
                   {loading ? t('saving') : t('saveWorkspace')}
                 </Button>
               )}
-            </form>
+            </RequiredForm>
           </CardContent>
         </Card>
 
         <div className="space-y-6 lg:col-span-2">
           <Card>
             <CardContent>
-              <form onSubmit={(e) => void saveProfile(e)} className="space-y-4">
+              <RequiredForm onSubmit={(e) => void saveProfile(e)} className="space-y-4">
                 <div>
                   <h2 className="font-bold text-semantic-text">{t('yourProfile')}</h2>
                   <p className="mt-1 text-sm text-semantic-text-muted">
@@ -283,7 +284,7 @@ export const Settings: React.FC = () => {
                 <Button type="submit" loading={loading}>
                   {loading ? t('saving') : t('saveProfile')}
                 </Button>
-              </form>
+              </RequiredForm>
             </CardContent>
           </Card>
 
@@ -384,7 +385,7 @@ export const Settings: React.FC = () => {
               </div>
 
               {user?.role === 'owner' && (
-                <form onSubmit={handleInvite} className="space-y-3 border-t border-semantic-border pt-4">
+                <RequiredForm onSubmit={handleInvite} className="space-y-3 border-t border-semantic-border pt-4">
                   <div className="text-xs font-bold text-semantic-text mb-2">
                     {t('addInviteMember')}
                   </div>
@@ -419,7 +420,7 @@ export const Settings: React.FC = () => {
                       {loading ? t('adding') : t('addMember')}
                     </Button>
                   </div>
-                </form>
+                </RequiredForm>
               )}
             </CardContent>
           </Card>

@@ -13,6 +13,7 @@ import type { DataTableColumn, DataTableFilterDef } from '../components/ui/DataT
 import { Card } from '../components/ui/Card';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/toast';
+import { RequiredForm } from '../components/ui/RequiredForm';
 import { apiRequest } from '../lib/api';
 
 function cn(...inputs: ClassValue[]) {
@@ -1063,7 +1064,7 @@ export function CRM() {
           {tab === 'Leads' && (
             <div className="space-y-4">
               <FormCard title={editingLead ? 'Edit lead' : 'New lead'} editing={!!editingLead}>
-                <form
+                <RequiredForm
                   onSubmit={(e) => void saveLead(e)}
                   className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_auto]"
                 >
@@ -1123,7 +1124,7 @@ export function CRM() {
                       </Button>
                     )}
                   </div>
-                </form>
+                </RequiredForm>
               </FormCard>
 
               <DataTable<Lead>
@@ -1161,7 +1162,7 @@ export function CRM() {
           {tab === 'Companies' && (
             <div className="space-y-4">
               <FormCard title={editingCompany ? 'Edit company' : 'New company'} editing={!!editingCompany}>
-                <form
+                <RequiredForm
                   onSubmit={(e) => void saveCompany(e)}
                   className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4"
                 >
@@ -1223,7 +1224,7 @@ export function CRM() {
                       </Button>
                     )}
                   </div>
-                </form>
+                </RequiredForm>
               </FormCard>
 
               <DataTable<Company>
@@ -1256,7 +1257,7 @@ export function CRM() {
           {tab === 'Contacts' && (
             <div className="space-y-4">
               <FormCard title={editingContact ? 'Edit contact' : 'New contact'} editing={!!editingContact}>
-                <form
+                <RequiredForm
                   onSubmit={(e) => void saveContact(e)}
                   className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-6"
                 >
@@ -1346,7 +1347,7 @@ export function CRM() {
                       </Button>
                     )}
                   </div>
-                </form>
+                </RequiredForm>
               </FormCard>
 
               <DataTable<Contact>
@@ -1379,7 +1380,7 @@ export function CRM() {
           {tab === 'Activities' && (
             <div className="space-y-4">
               <FormCard title={editingActivity ? 'Edit activity' : 'Log activity'} editing={!!editingActivity}>
-                <form
+                <RequiredForm
                   onSubmit={(e) => void saveActivity(e)}
                   className="grid gap-3 sm:grid-cols-2"
                 >
@@ -1391,6 +1392,7 @@ export function CRM() {
                       value={activityLead}
                       onChange={(e) => setActivityLead(e.target.value)}
                     >
+                      <option value="">Choose a lead</option>
                       {leads.map((lead) => (
                         <option key={lead.id} value={lead.id}>
                           {lead.title}
@@ -1437,7 +1439,6 @@ export function CRM() {
                       type="submit"
                       variant="primary"
                       loading={saving}
-                      disabled={!leads.length}
                     >
                       {editingActivity ? 'Save changes' : 'Add activity'}
                     </Button>
@@ -1455,7 +1456,7 @@ export function CRM() {
                       </Button>
                     )}
                   </div>
-                </form>
+                </RequiredForm>
               </FormCard>
 
               <Card>

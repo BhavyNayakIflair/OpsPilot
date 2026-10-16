@@ -13,6 +13,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import AIProgress from '../components/ui/AIProgress';
 import { AIGatewayBanner, type AIGatewayStatus } from '../components/ui/AIGatewayBanner';
 import { useToast } from '../context/toast';
+import { RequiredForm } from '../components/ui/RequiredForm';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -1208,7 +1209,7 @@ export function Quotes() {
               </div>
             )}
 
-            <form onSubmit={(e) => void submit(e)} className="quote-form-grid">
+            <RequiredForm onSubmit={(e) => void submit(e)} className="quote-form-grid">
               <label className="text-xs font-semibold text-semantic-text-muted">
                 Proposal title
                 <input
@@ -1440,7 +1441,7 @@ export function Quotes() {
                   </Button>
                 </div>
               </div>
-            </form>
+            </RequiredForm>
           </CardContent>
         </Card>
       </div>
@@ -1721,7 +1722,7 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
   return (
     <Card className="quote-cq">
       <CardContent className="space-y-5">
-        <form
+        <RequiredForm
           className="quote-rate-grid"
           onSubmit={async (e) => {
             e.preventDefault();
@@ -1802,7 +1803,7 @@ function RateCardForm({ cards, onCreated }: { cards: RateCard[]; onCreated: () =
               </Button>
             )}
           </div>
-        </form>
+        </RequiredForm>
         <ResponsiveGrid<RateCard>
           columns={rcColumns}
           rows={cards}
