@@ -23,8 +23,9 @@ function cn(...inputs: ClassValue[]) {
 }
 
 type Project = { id: string; name: string; status: string; budget_minutes: number; budget_amount_cents: number; currency: string; start_date?: string; end_date?: string; description?: string; lead_id?: string };
-type Task = { id: string; project_id: string; title: string; status: string; estimate_minutes: number; assignee_id?: string };
+type Task = { id: string; project_id: string; title: string; status: string; estimate_minutes: number; assignee_id?: string | null; assignees?: Array<{ person_id: string; person_name?: string; role?: string }> };
 type Employee = { id: string; full_name: string; email?: string; title?: string; billing_rate_cents: number; cost_rate_cents: number; is_active: boolean };
+type ProjectMember = { id: string; project_id: string; person_id: string; person_name?: string; person_email?: string; person_title?: string; role: string; allocation_percent: number; hours_per_week: number; start_date?: string | null; end_date?: string | null };
 type Entry = { id: string; project_id: string; user_id?: string; employee_id?: string; entry_date: string; minutes: number; description: string; is_billable: boolean; approval_status: string; task_id?: string };
 type LeaveRequest = { id: string; employee_id: string; start_date: string; end_date: string; status: string; reason?: string };
 type Invoice = { id: string; invoice_number: string; client_name: string; status: string; currency: string; subtotal_cents: number; tax_cents: number; total_cents: number; paid_cents: number; issue_date: string; due_date: string; notes?: string | null; project_id?: string | null; line_items: { id: string; description: string; quantity: number; unit_price_cents: number; amount_cents: number }[] };
@@ -648,7 +649,9 @@ export function ProjectsPage() {
   const toast = useToast();
   const [rows, setRows] = useState<Project[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [people, setPeople] = useState<Employee[]>([]);
   const [tasks, setTasks] = useState<Record<string, Task[]>>({});
+  const [projectMembers, setProjectMembers] = useState<Record<string, ProjectMember[]>>({});
   const [expanded, setExpanded] = useState('');
   const [name, setName] = useState('');
   const [budgetHours, setBudgetHours] = useState('');
@@ -663,16 +666,19 @@ export function ProjectsPage() {
   const [sortKey, setSortKey] = useState<string | null>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [newTaskTitle, setNewTaskTitle] = useState<Record<string, string>>({});
+  const [newMemberId, setNewMemberId] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [projectRows, entryRows] = await Promise.all([
+      const [projectRows, entryRows, personRows] = await Promise.all([
         apiRequest<Project[]>('/operations/projects'),
         apiRequest<Entry[]>('/operations/timesheets').catch(() => [] as Entry[]),
+        apiRequest<Employee[]>('/operations/people').catch(() => [] as Employee[]),
       ]);
       setRows(projectRows);
       setEntries(entryRows);
+      setPeople(personRows);
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to load projects');
@@ -711,12 +717,21 @@ export function ProjectsPage() {
     }
   };
 
+  const refreshProjectMembers = async (projectId: string) => {
+    const updated = await apiRequest<ProjectMember[]>(`/operations/projects/${projectId}/members`);
+    setProjectMembers((old) => ({ ...old, [projectId]: updated }));
+  };
+
   const toggle = async (project: Project) => {
     if (expanded === project.id) { setExpanded(''); return; }
     setExpanded(project.id);
     try {
-      const result = await apiRequest<Task[]>(`/operations/projects/${project.id}/tasks`);
-      setTasks((old) => ({ ...old, [project.id]: result }));
+      const [taskRows, memberRows] = await Promise.all([
+        apiRequest<Task[]>(`/operations/projects/${project.id}/tasks`),
+        apiRequest<ProjectMember[]>(`/operations/projects/${project.id}/members`).catch(() => [] as ProjectMember[]),
+      ]);
+      setTasks((old) => ({ ...old, [project.id]: taskRows }));
+      setProjectMembers((old) => ({ ...old, [project.id]: memberRows }));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to load tasks');
     }
@@ -734,6 +749,27 @@ export function ProjectsPage() {
       toast.success('Task created.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Unable to add task');
+    }
+  };
+
+  const addProjectMember = async (project: Project) => {
+    const personId = newMemberId[project.id];
+    if (!personId) return;
+    try {
+      await apiRequest(`/operations/projects/${project.id}/members`, {
+        method: 'POST',
+        body: JSON.stringify({
+          person_id: personId,
+          role: 'contributor',
+          allocation_percent: 100,
+          hours_per_week: 40,
+        }),
+      });
+      setNewMemberId((old) => ({ ...old, [project.id]: '' }));
+      await Promise.all([refreshTasks(project.id), refreshProjectMembers(project.id)]);
+      toast.success('Project member added.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Unable to add project member');
     }
   };
 
@@ -980,6 +1016,38 @@ export function ProjectsPage() {
                   </div>
                   {expanded === project.id && (
                     <CardContent className="ops-pop border-t border-semantic-border bg-semantic-surface-muted/40">
+                      <div className="mb-4 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted">Project members</h3>
+                          <Badge variant="muted" size="sm">{(projectMembers[project.id] || []).length}</Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(projectMembers[project.id] || []).length === 0 ? (
+                            <span className="text-xs text-semantic-text-muted">No project members allocated yet.</span>
+                          ) : (
+                            (projectMembers[project.id] || []).map((member) => (
+                              <Badge key={member.id} variant="muted" size="sm" className="rounded-full">
+                                {member.person_name || member.person_email || 'Teammate'}
+                              </Badge>
+                            ))
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <select
+                            aria-label={`Add member to ${project.name}`}
+                            className={`${fieldControl} min-w-[180px]`}
+                            value={newMemberId[project.id] || ''}
+                            onChange={(e) => setNewMemberId((old) => ({ ...old, [project.id]: e.target.value }))}
+                          >
+                            <option value="">Choose teammate</option>
+                            {people.filter((person) => !(projectMembers[project.id] || []).some((member) => member.person_id === person.id)).map((person) => (
+                              <option key={person.id} value={person.id}>{person.full_name}</option>
+                            ))}
+                          </select>
+                          <Button type="button" variant="secondary" onClick={() => void addProjectMember(project)} disabled={!newMemberId[project.id]}>Add member</Button>
+                        </div>
+                      </div>
+
                       <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted mb-3">Tasks</h3>
                       <div className="space-y-2 mb-4">
                         {(tasks[project.id] || []).length === 0 ? (
@@ -987,44 +1055,61 @@ export function ProjectsPage() {
                             <EmptyState icon={Inbox} title="No tasks yet" description="Add a task below to start planning." />
                           </div>
                         ) : (
-                          (tasks[project.id] || []).map((task) => (
-                            <div key={task.id} className="ops-pop flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-3 py-2.5 text-sm transition-colors hover:border-semantic-accent/40">
-                              <button
-                                className="min-w-0 flex-[1_1_200px] break-words text-left font-medium text-semantic-text"
-                                onClick={() => {
-                                  const title = window.prompt('Update task title', task.title);
-                                  if (title?.trim() && title !== task.title) void updateTask(task, { title: title.trim() });
-                                }}
-                              >
-                                {task.title}
-                              </button>
-                              <div className="flex flex-wrap items-center gap-2">
-                                {task.assignee_id ? (
-                                  <Badge variant="muted" className="h-6 w-6 rounded-full p-0 justify-center">
-                                    {initials('U')}
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="muted" size="sm">Unassigned</Badge>
-                                )}
-                                {task.estimate_minutes > 0 && (
-                                  <Badge variant="muted" size="sm">{(task.estimate_minutes / 60).toFixed(1)}h est</Badge>
-                                )}
-                                <select
-                                  aria-label={`Status for ${task.title}`}
-                                  className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs"
-                                  value={task.status}
-                                  onChange={(e) => void updateTask(task, { status: e.target.value })}
+                          (tasks[project.id] || []).map((task) => {
+                            const assigneeName = task.assignees?.find((assignee) => assignee.person_id === task.assignee_id)?.person_name || people.find((person) => person.id === task.assignee_id)?.full_name || 'U';
+                            return (
+                              <div key={task.id} className="ops-pop flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-3 py-2.5 text-sm transition-colors hover:border-semantic-accent/40">
+                                <button
+                                  className="min-w-0 flex-[1_1_200px] break-words text-left font-medium text-semantic-text"
+                                  onClick={() => {
+                                    const title = window.prompt('Update task title', task.title);
+                                    if (title?.trim() && title !== task.title) void updateTask(task, { title: title.trim() });
+                                  }}
                                 >
-                                  <option value="todo">To do</option>
-                                  <option value="in_progress">In progress</option>
-                                  <option value="done">Done</option>
-                                </select>
-                                <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void removeTask(task)}>
-                                  Delete
-                                </Button>
+                                  {task.title}
+                                </button>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {task.assignee_id ? (
+                                    <Badge variant="muted" className="h-6 w-6 rounded-full p-0 justify-center" title={assigneeName}>
+                                      {initials(assigneeName)}
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="muted" size="sm">Unassigned</Badge>
+                                  )}
+                                  {task.estimate_minutes > 0 && (
+                                    <Badge variant="muted" size="sm">{(task.estimate_minutes / 60).toFixed(1)}h est</Badge>
+                                  )}
+                                  <select
+                                    aria-label={`Assignee for ${task.title}`}
+                                    className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs"
+                                    value={task.assignee_id ?? ''}
+                                    onChange={(e) => {
+                                      const nextValue = e.target.value || null;
+                                      void updateTask(task, { assignee_id: nextValue });
+                                    }}
+                                  >
+                                    <option value="">Unassigned</option>
+                                    {people.map((person) => (
+                                      <option key={person.id} value={person.id}>{person.full_name}</option>
+                                    ))}
+                                  </select>
+                                  <select
+                                    aria-label={`Status for ${task.title}`}
+                                    className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs"
+                                    value={task.status}
+                                    onChange={(e) => void updateTask(task, { status: e.target.value })}
+                                  >
+                                    <option value="todo">To do</option>
+                                    <option value="in_progress">In progress</option>
+                                    <option value="done">Done</option>
+                                  </select>
+                                  <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void removeTask(task)}>
+                                    Delete
+                                  </Button>
+                                </div>
                               </div>
-                            </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
                       <RequiredForm
@@ -1995,6 +2080,11 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!employeeId && employees.length > 0) {
+      setEmployeeId(employees[0].id);
+    }
+  }, [employeeId, employees]);
 
   const add = async (e: FormEvent) => {
     e.preventDefault();
@@ -2023,6 +2113,22 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
       toast.success('Leave request deleted.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Unable to delete leave request');
+    }
+  };
+
+  const decide = async (item: LeaveRequest, decision: 'approved' | 'rejected' | 'cancelled') => {
+    try {
+      await apiRequest(`/operations/leave-requests/${item.id}/decision`, {
+        method: 'POST',
+        body: JSON.stringify({
+          decision,
+          decision_note: decision === 'approved' ? 'Approved from the operations workspace.' : decision === 'rejected' ? 'Rejected from the operations workspace.' : 'Cancelled from the operations workspace.',
+        }),
+      });
+      await load();
+      toast.success(`Leave request ${decision}.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Unable to update leave request');
     }
   };
 
@@ -2110,7 +2216,7 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
                     </span>
                     {item.reason && <span className="text-xs text-semantic-text-muted ml-8">{item.reason}</span>}
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant={
                       item.status === 'approved' ? 'success' :
                       item.status === 'rejected' ? 'danger' :
@@ -2128,7 +2234,9 @@ function LeaveWidget({ employees }: { employees: Employee[] }) {
                           setReason(item.reason || '');
                           editor.focusEditor();
                         }}>Edit</Button>
-                        <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void remove(item)}>Delete</Button>
+                        <Button variant="primary" size="sm" onClick={() => void decide(item, 'approved')}>Approve</Button>
+                        <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void decide(item, 'rejected')}>Reject</Button>
+                        <Button variant="ghost" size="sm" className="text-semantic-text-muted hover:text-semantic-text py-1 px-2" onClick={() => void remove(item)}>Delete</Button>
                       </>
                     )}
                   </div>
