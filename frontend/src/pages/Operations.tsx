@@ -17,13 +17,14 @@ import { DataTable } from '../components/ui/DataTable';
 import type { DataTableColumn, DataTableFilterDef } from '../components/ui/DataTable';
 import AIProgress from '../components/ui/AIProgress';
 import { RequiredForm } from '../components/ui/RequiredForm';
+import { TaskAssignmentEditor } from './OperationsManagement';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 type Project = { id: string; name: string; status: string; budget_minutes: number; budget_amount_cents: number; currency: string; start_date?: string; end_date?: string; description?: string; lead_id?: string };
-type Task = { id: string; project_id: string; title: string; status: string; estimate_minutes: number; assignee_id?: string | null; assignees?: Array<{ person_id: string; person_name?: string; role?: string }> };
+type Task = { id: string; project_id: string; title: string; status: string; estimate_minutes: number; assignee_id?: string | null; needs_reassignment?: boolean; assignees?: Array<{ person_id: string; person_name?: string; role?: string }> };
 type Employee = { id: string; full_name: string; email?: string; title?: string; billing_rate_cents: number; cost_rate_cents: number; is_active: boolean };
 type ProjectMember = { id: string; project_id: string; person_id: string; person_name?: string; person_email?: string; person_title?: string; role: string; allocation_percent: number; hours_per_week: number; start_date?: string | null; end_date?: string | null };
 type Entry = { id: string; project_id: string; user_id?: string; employee_id?: string; entry_date: string; minutes: number; description: string; is_billable: boolean; approval_status: string; task_id?: string };
@@ -667,6 +668,8 @@ export function ProjectsPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [newTaskTitle, setNewTaskTitle] = useState<Record<string, string>>({});
   const [newMemberId, setNewMemberId] = useState<Record<string, string>>({});
+  const [projectTab, setProjectTab] = useState<Record<string, 'members' | 'tasks'>>({});
+  const [assignmentTaskId, setAssignmentTaskId] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -674,7 +677,7 @@ export function ProjectsPage() {
       const [projectRows, entryRows, personRows] = await Promise.all([
         apiRequest<Project[]>('/operations/projects'),
         apiRequest<Entry[]>('/operations/timesheets').catch(() => [] as Entry[]),
-        apiRequest<Employee[]>('/operations/people').catch(() => [] as Employee[]),
+        apiRequest<Employee[]>('/operations/people/directory'),
       ]);
       setRows(projectRows);
       setEntries(entryRows);
@@ -728,7 +731,7 @@ export function ProjectsPage() {
     try {
       const [taskRows, memberRows] = await Promise.all([
         apiRequest<Task[]>(`/operations/projects/${project.id}/tasks`),
-        apiRequest<ProjectMember[]>(`/operations/projects/${project.id}/members`).catch(() => [] as ProjectMember[]),
+        apiRequest<ProjectMember[]>(`/operations/projects/${project.id}/members`),
       ]);
       setTasks((old) => ({ ...old, [project.id]: taskRows }));
       setProjectMembers((old) => ({ ...old, [project.id]: memberRows }));
@@ -770,6 +773,30 @@ export function ProjectsPage() {
       toast.success('Project member added.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Unable to add project member');
+    }
+  };
+
+  const updateProjectMember = async (project: Project, member: ProjectMember, values: Record<string, unknown>) => {
+    try {
+      await apiRequest(`/operations/projects/${project.id}/members/${member.person_id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(values),
+      });
+      await refreshProjectMembers(project.id);
+      toast.success('Project allocation updated.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Unable to update project allocation');
+    }
+  };
+
+  const removeProjectMember = async (project: Project, member: ProjectMember) => {
+    if (!window.confirm(`Remove ${member.person_name || 'this teammate'} from ${project.name}?`)) return;
+    try {
+      await apiRequest(`/operations/projects/${project.id}/members/${member.person_id}`, { method: 'DELETE' });
+      await Promise.all([refreshProjectMembers(project.id), refreshTasks(project.id)]);
+      toast.success('Project member removed.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Unable to remove project member');
     }
   };
 
@@ -1016,22 +1043,76 @@ export function ProjectsPage() {
                   </div>
                   {expanded === project.id && (
                     <CardContent className="ops-pop border-t border-semantic-border bg-semantic-surface-muted/40">
-                      <div className="mb-4 space-y-2">
+                      <div role="tablist" aria-label={`${project.name} sections`} className="mb-4 flex gap-2 border-b border-semantic-border pb-3">
+                        <Button role="tab" aria-selected={(projectTab[project.id] || 'tasks') === 'members'} variant={(projectTab[project.id] || 'tasks') === 'members' ? 'primary' : 'secondary'} size="sm" onClick={() => setProjectTab((old) => ({ ...old, [project.id]: 'members' }))}>Members</Button>
+                        <Button role="tab" aria-selected={(projectTab[project.id] || 'tasks') === 'tasks'} variant={(projectTab[project.id] || 'tasks') === 'tasks' ? 'primary' : 'secondary'} size="sm" onClick={() => setProjectTab((old) => ({ ...old, [project.id]: 'tasks' }))}>Tasks</Button>
+                      </div>
+                      {projectTab[project.id] === 'members' && <div className="mb-4 space-y-4">
                         <div className="flex items-center justify-between gap-2">
                           <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted">Project members</h3>
                           <Badge variant="muted" size="sm">{(projectMembers[project.id] || []).length}</Badge>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          {(projectMembers[project.id] || []).length === 0 ? (
-                            <span className="text-xs text-semantic-text-muted">No project members allocated yet.</span>
-                          ) : (
-                            (projectMembers[project.id] || []).map((member) => (
-                              <Badge key={member.id} variant="muted" size="sm" className="rounded-full">
-                                {member.person_name || member.person_email || 'Teammate'}
-                              </Badge>
-                            ))
-                          )}
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          {(() => {
+                            const members = projectMembers[project.id] || [];
+                            const memberIds = new Set(members.map((member) => member.person_id));
+                            const assignedMinutes = (tasks[project.id] || [])
+                              .filter((task) => task.status !== 'done')
+                              .filter((task) => (task.assignees || []).some((assignee) => memberIds.has(assignee.person_id)) || (task.assignee_id && memberIds.has(task.assignee_id)))
+                              .reduce((sum, task) => sum + task.estimate_minutes, 0);
+                            const allocatedHours = members.reduce((sum, member) => sum + member.hours_per_week, 0);
+                            return (
+                              <>
+                                <div className="rounded-xl border border-semantic-border bg-semantic-surface p-3">
+                                  <p className="text-xs text-semantic-text-muted">Allocated capacity</p>
+                                  <p className="mt-1 text-lg font-bold">{allocatedHours}h/week</p>
+                                </div>
+                                <div className="rounded-xl border border-semantic-border bg-semantic-surface p-3">
+                                  <p className="text-xs text-semantic-text-muted">Open task estimates</p>
+                                  <p className="mt-1 text-lg font-bold">{(assignedMinutes / 60).toFixed(1)}h</p>
+                                </div>
+                                <div className="rounded-xl border border-semantic-border bg-semantic-surface p-3">
+                                  <p className="text-xs text-semantic-text-muted">Unallocated project tasks</p>
+                                  <p className="mt-1 text-lg font-bold">{(tasks[project.id] || []).filter((task) => task.status !== 'done' && !task.assignee_id && !(task.assignees || []).length).length}</p>
+                                </div>
+                              </>
+                            );
+                          })()}
                         </div>
+                        {(projectMembers[project.id] || []).length === 0 ? (
+                          <EmptyState icon={Inbox} title="No project members" description="Allocate teammates here before assigning tasks." />
+                        ) : (
+                          <div className="space-y-2">
+                            {(projectMembers[project.id] || []).map((member) => (
+                              <div key={member.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-semantic-border bg-semantic-surface p-3">
+                                <div className="min-w-0">
+                                  <p className="font-medium">{member.person_name || member.person_email || 'Teammate'}</p>
+                                  <p className="text-xs text-semantic-text-muted">{member.person_title || member.person_email || 'Project allocation'}</p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <select aria-label={`Role for ${member.person_name || 'project member'}`} className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs" value={member.role} onChange={(event) => void updateProjectMember(project, member, { role: event.target.value })}>
+                                    <option value="lead">Lead</option><option value="contributor">Contributor</option><option value="reviewer">Reviewer</option>
+                                  </select>
+                                  <label className="flex items-center gap-1 text-xs text-semantic-text-muted">
+                                    Allocation %
+                                    <input aria-label={`Allocation percentage for ${member.person_name || 'project member'}`} className="w-16 rounded-lg border border-semantic-border bg-semantic-surface px-2 py-1" type="number" min="1" max="200" defaultValue={member.allocation_percent} onBlur={(event) => {
+                                      const value = Number(event.currentTarget.value);
+                                      if (Number.isFinite(value) && value >= 1 && value <= 200 && value !== member.allocation_percent) void updateProjectMember(project, member, { allocation_percent: value });
+                                    }} />
+                                  </label>
+                                  <label className="flex items-center gap-1 text-xs text-semantic-text-muted">
+                                    Hours/week
+                                    <input aria-label={`Hours per week for ${member.person_name || 'project member'}`} className="w-16 rounded-lg border border-semantic-border bg-semantic-surface px-2 py-1" type="number" min="1" max="80" defaultValue={member.hours_per_week} onBlur={(event) => {
+                                      const value = Number(event.currentTarget.value);
+                                      if (Number.isFinite(value) && value >= 1 && value <= 80 && value !== member.hours_per_week) void updateProjectMember(project, member, { hours_per_week: value });
+                                    }} />
+                                  </label>
+                                  <Button variant="ghost" size="sm" className="text-semantic-danger" onClick={() => void removeProjectMember(project, member)}>Remove</Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div className="flex flex-col gap-2 sm:flex-row">
                           <select
                             aria-label={`Add member to ${project.name}`}
@@ -1046,8 +1127,9 @@ export function ProjectsPage() {
                           </select>
                           <Button type="button" variant="secondary" onClick={() => void addProjectMember(project)} disabled={!newMemberId[project.id]}>Add member</Button>
                         </div>
-                      </div>
+                      </div>}
 
+                      {(projectTab[project.id] || 'tasks') === 'tasks' && <>
                       <h3 className="text-[11px] font-bold uppercase tracking-wider text-semantic-text-muted mb-3">Tasks</h3>
                       <div className="space-y-2 mb-4">
                         {(tasks[project.id] || []).length === 0 ? (
@@ -1058,55 +1140,61 @@ export function ProjectsPage() {
                           (tasks[project.id] || []).map((task) => {
                             const assigneeName = task.assignees?.find((assignee) => assignee.person_id === task.assignee_id)?.person_name || people.find((person) => person.id === task.assignee_id)?.full_name || 'U';
                             return (
-                              <div key={task.id} className="ops-pop flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-3 py-2.5 text-sm transition-colors hover:border-semantic-accent/40">
-                                <button
-                                  className="min-w-0 flex-[1_1_200px] break-words text-left font-medium text-semantic-text"
-                                  onClick={() => {
-                                    const title = window.prompt('Update task title', task.title);
-                                    if (title?.trim() && title !== task.title) void updateTask(task, { title: title.trim() });
-                                  }}
-                                >
-                                  {task.title}
-                                </button>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {task.assignee_id ? (
-                                    <Badge variant="muted" className="h-6 w-6 rounded-full p-0 justify-center" title={assigneeName}>
-                                      {initials(assigneeName)}
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="muted" size="sm">Unassigned</Badge>
-                                  )}
-                                  {task.estimate_minutes > 0 && (
-                                    <Badge variant="muted" size="sm">{(task.estimate_minutes / 60).toFixed(1)}h est</Badge>
-                                  )}
-                                  <select
-                                    aria-label={`Assignee for ${task.title}`}
-                                    className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs"
-                                    value={task.assignee_id ?? ''}
-                                    onChange={(e) => {
-                                      const nextValue = e.target.value || null;
-                                      void updateTask(task, { assignee_id: nextValue });
+                              <div key={task.id}>
+                                <div className="ops-pop flex flex-wrap items-center justify-between gap-3 rounded-ui-xl border border-semantic-border bg-semantic-surface px-3 py-2.5 text-sm transition-colors hover:border-semantic-accent/40">
+                                  <button
+                                    className="min-w-0 flex-[1_1_200px] break-words text-left font-medium text-semantic-text"
+                                    onClick={() => {
+                                      const title = window.prompt('Update task title', task.title);
+                                      if (title?.trim() && title !== task.title) void updateTask(task, { title: title.trim() });
                                     }}
                                   >
-                                    <option value="">Unassigned</option>
-                                    {people.map((person) => (
-                                      <option key={person.id} value={person.id}>{person.full_name}</option>
-                                    ))}
-                                  </select>
-                                  <select
-                                    aria-label={`Status for ${task.title}`}
-                                    className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs"
-                                    value={task.status}
-                                    onChange={(e) => void updateTask(task, { status: e.target.value })}
-                                  >
-                                    <option value="todo">To do</option>
-                                    <option value="in_progress">In progress</option>
-                                    <option value="done">Done</option>
-                                  </select>
-                                  <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void removeTask(task)}>
-                                    Delete
-                                  </Button>
+                                    {task.title}
+                                  </button>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    {(task.assignees || []).length > 0 ? (task.assignees || []).map((assignee) => (
+                                      <Badge key={assignee.person_id} variant="muted" className="h-7 w-7 rounded-full p-0 justify-center" title={assignee.person_name || people.find((person) => person.id === assignee.person_id)?.full_name || 'Assignee'}>
+                                        {initials(assignee.person_name || people.find((person) => person.id === assignee.person_id)?.full_name || 'U')}
+                                      </Badge>
+                                    )) : task.assignee_id ? (
+                                      <Badge variant="muted" className="h-7 w-7 rounded-full p-0 justify-center" title={assigneeName}>{initials(assigneeName)}</Badge>
+                                    ) : <Badge variant="muted" size="sm">Unassigned</Badge>}
+                                    {task.needs_reassignment && <Badge variant="danger" size="sm">Needs reassignment</Badge>}
+                                    {task.estimate_minutes > 0 && <Badge variant="muted" size="sm">{(task.estimate_minutes / 60).toFixed(1)}h est</Badge>}
+                                    <select
+                                      aria-label={`Status for ${task.title}`}
+                                      className="rounded-ui-lg border border-semantic-border bg-semantic-surface px-2 py-1.5 text-xs"
+                                      value={task.status}
+                                      onChange={(e) => void updateTask(task, { status: e.target.value })}
+                                    >
+                                      <option value="todo">To do</option>
+                                      <option value="in_progress">In progress</option>
+                                      <option value="in_review">In review</option>
+                                      <option value="done">Done</option>
+                                    </select>
+                                    <Button variant="secondary" size="sm" onClick={() => setAssignmentTaskId((current) => current === task.id ? '' : task.id)}>
+                                      {assignmentTaskId === task.id ? 'Close assignment' : 'Assign people'}
+                                    </Button>
+                                    <Button variant="ghost" size="sm" className="text-semantic-danger hover:text-semantic-danger hover:bg-semantic-danger-soft py-1 px-2" onClick={() => void removeTask(task)}>
+                                      Delete
+                                    </Button>
+                                  </div>
                                 </div>
+                                {assignmentTaskId === task.id && <div className="mt-2"><TaskAssignmentEditor
+                                  task={{
+                                    id: task.id,
+                                    project_id: task.project_id,
+                                    title: task.title,
+                                    assignees: (task.assignees || []).map((assignee) => ({
+                                      person_id: assignee.person_id,
+                                      person_name: assignee.person_name,
+                                      role: assignee.role || 'contributor',
+                                    })),
+                                  }}
+                                  people={people.map((person) => ({ id: person.id, full_name: person.full_name, is_active: person.is_active }))}
+                                  onClose={() => setAssignmentTaskId('')}
+                                  onSaved={() => refreshTasks(task.project_id)}
+                                /></div>}
                               </div>
                             );
                           })
@@ -1136,6 +1224,7 @@ export function ProjectsPage() {
                         </label>
                         <Button type="submit">Add task</Button>
                       </RequiredForm>
+                      </>}
                     </CardContent>
                   )}
                 </Card>
@@ -1922,7 +2011,7 @@ export function PeoplePage() {
           </div>
           <div className="flex flex-col">
             <span className="font-bold text-semantic-text flex items-center gap-2">
-              {r.full_name}
+              <Link to={`/people/${r.id}`} className="hover:text-semantic-accent hover:underline">{r.full_name}</Link>
               {!r.is_active && <Badge variant="danger" size="sm">Inactive</Badge>}
             </span>
             {r.title && <span className="text-xs text-semantic-text-muted mt-0.5">{r.title}</span>}
@@ -2724,6 +2813,9 @@ export function InvoicingPage() {
                     </div>
 
                     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-semantic-border pt-3">
+                      <Link to={`/invoicing/${inv.id}`} className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-ui-lg border border-semantic-border bg-semantic-surface px-3 py-1.5 text-xs font-semibold text-semantic-text hover:bg-semantic-surface-muted">
+                        View details
+                      </Link>
                       {inv.status === 'draft' && <>
                         <Button variant="secondary" size="sm" onClick={() => edit(inv)}><Pencil size={14} /> Edit</Button>
                         <Button variant="primary" size="sm" onClick={() => void send(inv)}><Send size={14} /> Mark sent</Button>

@@ -69,7 +69,7 @@ async def assign_task_member(
     org: Organization = Depends(get_current_tenant),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    _role: Membership = Depends(require_role([RoleType.PROJECT_MANAGER, RoleType.APPROVER])),
+    _role: Membership = Depends(require_role([RoleType.PROJECT_MANAGER, RoleType.APPROVER, RoleType.OWNER])),
 ):
     """Assign an active project member to a task with leave conflict check and legacy column sync."""
     assignee, conflict = await AssignmentService.assign_task(
@@ -96,7 +96,7 @@ async def update_task_assignee_role(
     org: Organization = Depends(get_current_tenant),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    _role: Membership = Depends(require_role([RoleType.PROJECT_MANAGER, RoleType.APPROVER])),
+    _role: Membership = Depends(require_role([RoleType.PROJECT_MANAGER, RoleType.APPROVER, RoleType.OWNER])),
 ):
     """Change the role of an existing task assignee (owner, contributor, reviewer)."""
     assignee, _ = await AssignmentService.assign_task(
@@ -122,7 +122,7 @@ async def unassign_task_member(
     org: Organization = Depends(get_current_tenant),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    _role: Membership = Depends(require_role([RoleType.PROJECT_MANAGER, RoleType.APPROVER])),
+    _role: Membership = Depends(require_role([RoleType.PROJECT_MANAGER, RoleType.APPROVER, RoleType.OWNER])),
 ):
     """Unassign a teammate from a task."""
     await AssignmentService.unassign_task(
@@ -178,7 +178,7 @@ async def get_task_assignee_suggestions(
     task_id: str,
     org: Organization = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
-    _role: Membership = Depends(require_role([RoleType.PROJECT_MANAGER, RoleType.APPROVER, RoleType.EMPLOYEE])),
+    _role: Membership = Depends(require_role([RoleType.PROJECT_MANAGER, RoleType.APPROVER, RoleType.EMPLOYEE, RoleType.OWNER])),
 ):
     """Suggest available assignees for a task: project members + team members, sorted by lowest load."""
     return await AssignmentService.suggest_assignees_for_task(db=db, org_id=org.id, task_id=task_id)

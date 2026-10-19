@@ -2,9 +2,9 @@ const API_BASE = '/api/v1';
 
 export class ApiError extends Error {
   status: number;
-  data: any;
+  data: unknown;
 
-  constructor(status: number, message: string, data?: any) {
+  constructor(status: number, message: string, data?: unknown) {
     super(message);
     this.status = status;
     this.data = data;
@@ -40,13 +40,21 @@ export async function apiRequest<T = any>(
 
   if (!res.ok) {
     let errDetail = 'Request failed';
+    let errorData: unknown;
     try {
-      const errData = await res.json();
-      errDetail = errData.detail || errData.message || JSON.stringify(errData);
+      errorData = await res.json();
+      if (typeof errorData === 'object' && errorData !== null && 'detail' in errorData) {
+        const detail = errorData.detail;
+        errDetail = typeof detail === 'string' ? detail : JSON.stringify(detail);
+      } else if (typeof errorData === 'object' && errorData !== null && 'message' in errorData && typeof errorData.message === 'string') {
+        errDetail = errorData.message;
+      } else {
+        errDetail = JSON.stringify(errorData);
+      }
     } catch {
       errDetail = await res.text();
     }
-    throw new ApiError(res.status, errDetail);
+    throw new ApiError(res.status, errDetail, errorData);
   }
 
   if (res.status === 204) return undefined as T;
