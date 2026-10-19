@@ -54,11 +54,15 @@ C_TEXT_LIGHT   = colors.HexColor("#94A3B8")
 C_WHITE        = colors.white
 
 STATUS_COLORS = {
-    "draft":    colors.HexColor("#F59E0B"),
-    "sent":     colors.HexColor("#3B82F6"),
-    "accepted": colors.HexColor("#10B981"),
-    "declined": colors.HexColor("#EF4444"),
-    "expired":  colors.HexColor("#6B7280"),
+    "draft":          colors.HexColor("#F59E0B"),
+    "sent":           colors.HexColor("#3B82F6"),
+    "accepted":       colors.HexColor("#10B981"),
+    "paid":           colors.HexColor("#10B981"),
+    "partial":        colors.HexColor("#6366F1"),
+    "partially_paid": colors.HexColor("#6366F1"),
+    "declined":       colors.HexColor("#EF4444"),
+    "void":           colors.HexColor("#64748B"),
+    "expired":        colors.HexColor("#6B7280"),
 }
 
 FONT_BOLD = "Helvetica-Bold"

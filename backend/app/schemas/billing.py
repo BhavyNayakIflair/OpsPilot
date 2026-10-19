@@ -28,6 +28,7 @@ class InvoiceCreate(BaseModel):
     currency: str = Field(default="USD", min_length=3, max_length=3)
     issue_date: date
     due_date: date
+    discount_bps: int = Field(default=0, ge=0, le=10000)
     tax_bps: int = Field(default=0, ge=0, le=10000)
     notes: Optional[str] = None
     line_items: List[InvoiceLineCreate] = Field(min_length=1)
@@ -51,9 +52,12 @@ class InvoiceRead(ReadModel):
     status: str
     currency: str
     subtotal_cents: int
+    discount_cents: int = 0
     tax_cents: int
     total_cents: int
     paid_cents: int
+    balance_due_cents: int = 0
+    is_overdue: bool = False
     issue_date: date
     due_date: date
     notes: Optional[str]
