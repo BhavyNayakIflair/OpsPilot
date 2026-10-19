@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, Date, Text
+from sqlalchemy import Column, String, Integer, ForeignKey, Date, Text, UniqueConstraint
 from app.core.database import Base
 from app.models.base import TimestampMixin, generate_uuid
 
@@ -13,12 +13,30 @@ class Invoice(Base, TimestampMixin):
     status = Column(String(30), default="draft", nullable=False)
     currency = Column(String(3), default="USD", nullable=False)
     subtotal_cents = Column(Integer, default=0, nullable=False)
+    discount_cents = Column(Integer, default=0, nullable=False)
     tax_cents = Column(Integer, default=0, nullable=False)
     total_cents = Column(Integer, default=0, nullable=False)
     paid_cents = Column(Integer, default=0, nullable=False)
     issue_date = Column(Date, nullable=False)
     due_date = Column(Date, nullable=False)
     notes = Column(Text)
+
+    @property
+    def balance_due_cents(self) -> int:
+        return max(0, self.total_cents - self.paid_cents)
+
+
+class InvoiceSequence(Base, TimestampMixin):
+    __tablename__ = "invoice_sequences"
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    org_id = Column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    year = Column(Integer, nullable=False, index=True)
+    prefix = Column(String(20), default="INV", nullable=False)
+    last_number = Column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "year", "prefix", name="uq_invoice_seq_org_year_prefix"),
+    )
 
 
 class InvoiceLineItem(Base, TimestampMixin):

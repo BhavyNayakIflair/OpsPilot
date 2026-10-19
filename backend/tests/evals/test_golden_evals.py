@@ -49,10 +49,10 @@ class GoldenEvalMockProvider(LLMProvider):
                 assumptions=["Standard operational assumptions apply."],
             )
 
-        if "sla" in prompt.lower() or "uptime" in prompt.lower():
-            return "Our enterprise SLA guarantees 99.95% annual uptime as specified in [Chunk chunk-1]."
         if "priority 1" in prompt.lower() or "incident" in prompt.lower():
             return "Guaranteed 15-minute response SLA for Priority 1 incidents as stated in [Chunk chunk-1]."
+        if "sla" in prompt.lower() or "uptime" in prompt.lower():
+            return "Our enterprise SLA guarantees 99.95% annual uptime as specified in [Chunk chunk-1]."
 
         return "This is a generic evaluated AI response citing [Chunk chunk-1]."
 
