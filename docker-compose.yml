@@ -72,6 +72,18 @@ services:
       - S3_SECRET_KEY=minioadmin
       - S3_BUCKET_NAME=opspilot-docs
       - MOCK_AI_PROVIDER=true
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - CF_ACCOUNT_ID=${CF_ACCOUNT_ID:-}
+      - CF_API_TOKEN=${CF_API_TOKEN:-}
+      - JOBS_EXECUTION_MODE=queue
+      - JOBS_QUEUE_NAME=${JOBS_QUEUE_NAME:-opspilot:ai}
+      - JOBS_AI_MAX_CONCURRENCY=${JOBS_AI_MAX_CONCURRENCY:-1}
     ports:
       - "8000:8000"
 
@@ -92,6 +104,31 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=opspilot-production-secret-key-change-me
       - MOCK_AI_PROVIDER=true
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - S3_BUCKET_NAME=opspilot-docs
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - CF_ACCOUNT_ID=${CF_ACCOUNT_ID:-}
+      - CF_API_TOKEN=${CF_API_TOKEN:-}
+      - JOBS_EXECUTION_MODE=queue
+      - JOBS_QUEUE_NAME=${JOBS_QUEUE_NAME:-opspilot:ai}
+      - JOBS_AI_MAX_CONCURRENCY=${JOBS_AI_MAX_CONCURRENCY:-1}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import redis; raise SystemExit(0 if redis.Redis.from_url('redis://redis:6379/0').exists('arq:health-check') else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   frontend:
     build:
