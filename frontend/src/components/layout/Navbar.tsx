@@ -4,6 +4,7 @@ import { Check, Command, LogOut, Menu, Moon, Search, Sun, X } from 'lucide-react
 import { useAuth } from '../../context/AuthContext';
 import { useTranslation, type TranslationKey } from '../../i18n';
 import type { RoleType } from '../../types/auth';
+import { ActivityCenter } from './ActivityCenter';
 
 const destinations: [TranslationKey, string][] = [
   ['dashboard', '/dashboard'], ['crmLeads', '/crm'], ['quotesProposals', '/quotes'],
@@ -83,6 +84,7 @@ export const Navbar: React.FC<{ onMenu?: () => void }> = ({ onMenu }) => {
 
         {/* Right: theme, user, sign out */}
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <ActivityCenter />
           <button
             onClick={() => setIsDark((value) => !value)}
             title={isDark ? t('useLightTheme') : t('useDarkTheme')}

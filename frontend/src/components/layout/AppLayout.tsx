@@ -3,6 +3,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Navbar } from './Navbar';
 import { useAuth } from '../../context/AuthContext';
+import { JobsProvider } from '../../context/JobsContext';
 
 export const AppLayout: React.FC = () => {
   const { user, loading } = useAuth();
@@ -25,6 +26,7 @@ export const AppLayout: React.FC = () => {
   }
 
   return (
+    <JobsProvider key={`${user.id}:${user.org_id}`}>
     <div className="flex h-screen overflow-hidden bg-[var(--canvas)] font-sans">
       {/* Mobile backdrop */}
       {sidebarOpen && (
@@ -54,5 +56,6 @@ export const AppLayout: React.FC = () => {
         </main>
       </div>
     </div>
+    </JobsProvider>
   );
 };

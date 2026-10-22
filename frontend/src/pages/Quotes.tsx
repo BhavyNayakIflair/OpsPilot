@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Sparkles, FileText, Calendar, CheckCircle2, Trash2, ExternalLink, Edit3, Search, ArrowUp, ArrowDown, ArrowUpDown, Plus, CreditCard } from 'lucide-react';
@@ -14,16 +14,24 @@ import AIProgress from '../components/ui/AIProgress';
 import { AIGatewayBanner, type AIGatewayStatus } from '../components/ui/AIGatewayBanner';
 import { useToast } from '../context/toast';
 import { RequiredForm } from '../components/ui/RequiredForm';
+import { useJobs, useJobForSubject } from '../context/JobsContext';
+import {
+  submitQuoteAgentJob,
+  submitQuoteDraftJob,
+} from '../lib/jobs';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+function idempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 type Lead = { id: string; title: string; status?: string };
 type RateCard = { id: string; name: string; currency: string; default_rate_cents: number; description?: string | null };
 type Quote = { id: string; title: string; status: string; currency: string; subtotal_cents: number; total_cents: number; accept_token: string; lead_id?: string | null; created_at?: string; accepted_at?: string | null; line_items: { id: string; description: string; quantity: number; amount_cents: number }[] };
 type QuoteDraft = { quote: { id: string; title: string; description?: string | null; lead_id: string; rate_card_id?: string; currency: string; discount_bps: number; tax_bps: number; terms?: string | null; line_items: { description: string; quantity: number; unit_price_cents: number }[] }; assumptions: string[] };
-type QuoteAgentRun = { id: string; status: string; result_data: { quote_id?: string; flags?: string[]; error?: string }; steps: { node_name: string; model: string; latency_ms: number; result_summary: string }[] };
 const field = 'field-control';
 
 /**
@@ -325,6 +333,8 @@ function ResponsiveGrid<T>({
 export function Quotes() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { jobs, refreshJob, acknowledge } = useJobs();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [cards, setCards] = useState<RateCard[]>([]);
@@ -342,16 +352,9 @@ export function Quotes() {
   const [error, setError] = useState('');
   const [pdfUrl, setPdfUrl] = useState('');
   const [assumptions, setAssumptions] = useState<string[]>([]);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [agentBusy, setAgentBusy] = useState(false);
-  const [agentStatus, setAgentStatus] = useState('');
-  const [aiPreview, setAiPreview] = useState<{ quote: QuoteDraft['quote']; assumptions: string[] } | null>(null);
-  const [agentError, setAgentError] = useState('');
-  const [aiError, setAiError] = useState('');
-  const [aiGatewayStatus, setAiGatewayStatus] = useState<AIGatewayStatus>('idle');
-  const [aiAttempt, setAiAttempt] = useState<{ current: number; total: number }>({ current: 1, total: 3 });
-  const [aiProvider, setAiProvider] = useState<string>('auto');
-  const [aiModel, setAiModel] = useState<string>('');
+  const requestIntent = useRef(false);
+  const agentIntent = useRef(false);
+  const requestedJob = useRef('');
   const [editorFlash, setEditorFlash] = useState(false);
 
   const [search, setSearch] = useState('');
@@ -359,6 +362,38 @@ export function Quotes() {
   const [sortKey, setSortKey] = useState<string | null>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>('desc');
   const [view, setView] = useState<'quotes' | 'rates'>('quotes');
+
+  const explicitJobId = searchParams.get('job');
+  const explicitJob = explicitJobId ? jobs.get(explicitJobId) : undefined;
+  const leadDraftJob = useJobForSubject('quote_draft', leadId);
+  const leadAgentJob = useJobForSubject('quote_agent', leadId);
+  const aiJob = explicitJob?.job_type === 'quote_draft' ? explicitJob : leadDraftJob;
+  const agentJob = explicitJob?.job_type === 'quote_agent' ? explicitJob : leadAgentJob;
+  const aiBusy = Boolean(aiJob && ['queued', 'running'].includes(aiJob.status));
+  const agentBusy = Boolean(agentJob && ['queued', 'running', 'waiting_for_approval'].includes(agentJob.status));
+  const aiError = aiJob?.status === 'failed' ? (aiJob.error_message || 'AI quote drafting failed.') : '';
+  const agentError = agentJob?.status === 'failed' ? (agentJob.error_message || 'Quote agent failed.') : '';
+  const aiPreview = aiJob?.status === 'completed' && aiJob.result?.quote
+    ? {
+        quote: aiJob.result.quote,
+        assumptions: aiJob.result.assumptions || [],
+      }
+    : null;
+  const agentStatus = agentJob?.status === 'waiting_for_approval'
+    ? agentJob.message
+    : agentJob?.status === 'completed'
+      ? 'Quote agent completed its review.'
+      : '';
+  const aiGatewayStatus: AIGatewayStatus = aiBusy
+    ? 'generating'
+    : aiError
+      ? 'error'
+      : aiPreview && (aiJob?.result?.is_degraded || ['ollama', 'mock'].includes(aiJob?.result?.provider || ''))
+        ? 'degraded'
+        : 'idle';
+  const aiAttempt = { current: 1, total: 1 };
+  const aiProvider = aiJob?.result?.provider || 'auto';
+  const aiModel = '';
 
   // Scroll targets
   const editorRef = useRef<HTMLDivElement>(null);
@@ -387,6 +422,22 @@ export function Quotes() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!explicitJobId) return;
+    if (explicitJob) {
+      if (explicitJob.subject_id) setLeadId(explicitJob.subject_id);
+      return;
+    }
+    if (requestedJob.current === explicitJobId) return;
+    requestedJob.current = explicitJobId;
+    void refreshJob(explicitJobId, '/quotes')
+      .then((job) => {
+        if (job.subject_id) setLeadId(job.subject_id);
+      })
+      .catch((jobError: unknown) => {
+        toast.error(jobError instanceof Error ? jobError.message : 'Could not load this background job.');
+      });
+  }, [explicitJob, explicitJobId, refreshJob, toast]);
   useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
 
   // When a PDF preview opens, bring it into view automatically (no manual scrolling to the bottom).
@@ -457,9 +508,13 @@ export function Quotes() {
   };
 
   const resetEditor = () => {
+    if (aiJob && aiPreview) {
+      void acknowledge(aiJob.id).catch((ackError: unknown) => {
+        toast.error(ackError instanceof Error ? ackError.message : 'Could not dismiss this job.');
+      });
+    }
     setEditingId('');
     setAssumptions([]);
-    setAiPreview(null);
     setTitle('');
     setDescription('');
     setLeadId('');
@@ -470,7 +525,7 @@ export function Quotes() {
     setTax('0');
   };
 
-  const applyAiPreview = () => {
+  const applyAiPreview = async () => {
     if (!aiPreview) return;
     const quote = aiPreview.quote;
     setEditingId(quote.id);
@@ -490,11 +545,38 @@ export function Quotes() {
       }))
     );
     setAssumptions(aiPreview.assumptions);
-    setAiPreview(null);
     void load();
+    if (aiJob) {
+      try {
+        await acknowledge(aiJob.id);
+      } catch (ackError) {
+        toast.error(ackError instanceof Error ? ackError.message : 'Could not dismiss this job.');
+      }
+    }
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('job');
+      return next;
+    }, { replace: true });
+  };
+
+  const discardAiPreview = async () => {
+    if (aiJob) {
+      try {
+        await acknowledge(aiJob.id);
+      } catch (ackError) {
+        toast.error(ackError instanceof Error ? ackError.message : 'Could not dismiss this job.');
+      }
+    }
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('job');
+      return next;
+    }, { replace: true });
   };
 
   const draftWithAI = async () => {
+    if (requestIntent.current || aiBusy) return;
     if (!leadId) {
       setError('Choose a lead before drafting a quote with AI.');
       return;
@@ -504,82 +586,39 @@ export function Quotes() {
       setError('Quotes cannot be drafted for lost leads. Choose an open or won lead.');
       return;
     }
-    setAiBusy(true);
-    setAiError('');
-    setAiPreview(null);
+    requestIntent.current = true;
     setError('');
-    setAiGatewayStatus('generating');
-    setAiAttempt({ current: 1, total: 3 });
-    setAiProvider('Gemini 2.5 Flash');
-    setAiModel('gemini-2.5-flash');
-
-    // Multi-route failover progression simulation for interactive UI feedback
-    const t1 = setTimeout(() => {
-      setAiAttempt({ current: 2, total: 3 });
-      setAiProvider('Cloudflare Workers AI');
-      setAiModel('@cf/meta/llama-3.1-8b-instruct');
-    }, 2500);
-
-    const t2 = setTimeout(() => {
-      setAiAttempt({ current: 3, total: 3 });
-      setAiProvider('Ollama (local perimeter)');
-      setAiModel('qwen2.5:3b-instruct');
-    }, 6000);
-
     try {
-      const result = await apiRequest<QuoteDraft & { provider?: string; is_degraded?: boolean }>('/quotes/draft', {
-        method: 'POST',
-        body: JSON.stringify({
-          lead_id: leadId,
-          rate_card_id: cardId || null,
-          title: title || null,
-          description: description || null,
-          currency,
-          discount_bps: Math.round(Number(discount) * 100),
-          tax_bps: Math.round(Number(tax) * 100),
-          terms: terms || null,
-          line_items: lineItems
-            .filter((line) => line.description.trim())
-            .map((line) => ({
-              description: line.description,
-              quantity: Number(line.quantity),
-              unit_price_cents: line.price ? Math.round(Number(line.price) * 100) : null,
-            })),
-        }),
-      });
-      clearTimeout(t1);
-      clearTimeout(t2);
-
-      setAiPreview({ quote: result.quote, assumptions: result.assumptions });
-      if (result.is_degraded || result.provider === 'ollama' || result.provider === 'mock') {
-        setAiGatewayStatus('degraded');
-        setAiProvider(result.provider === 'ollama' ? 'Ollama (local)' : 'Mock local');
-      } else {
-        setAiGatewayStatus('idle');
-      }
-      toast.success('AI quote draft is ready for review.');
+      const submission = await submitQuoteDraftJob({
+        lead_id: leadId,
+        rate_card_id: cardId || null,
+        title: title || null,
+        description: description || null,
+        currency,
+        discount_bps: Math.round(Number(discount) * 100),
+        tax_bps: Math.round(Number(tax) * 100),
+        terms: terms || null,
+        line_items: lineItems
+          .filter((line) => line.description.trim())
+          .map((line) => ({
+            description: line.description,
+            quantity: Number(line.quantity),
+            unit_price_cents: line.price ? Math.round(Number(line.price) * 100) : null,
+          })),
+      }, idempotencyKey());
+      await refreshJob(submission.job_id, '/quotes');
+      setSearchParams({ job: submission.job_id }, { replace: true });
     } catch (err) {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      const msg = err instanceof Error ? err.message : 'Could not draft quote with AI';
-      setAiError(msg);
-      setError(msg);
-      if (
-        msg.includes('503') ||
-        msg.toLowerCase().includes('exhausted') ||
-        msg.toLowerCase().includes('busy') ||
-        msg.toLowerCase().includes('capacity')
-      ) {
-        setAiGatewayStatus('busy');
-      } else {
-        setAiGatewayStatus('error');
-      }
+      const message = err instanceof Error ? err.message : 'Could not submit quote drafting job';
+      setError(message);
+      toast.error(message);
     } finally {
-      setAiBusy(false);
+      requestIntent.current = false;
     }
   };
 
   const runQuoteAgent = async () => {
+    if (agentIntent.current || agentBusy) return;
     if (!leadId) {
       setError('Choose a lead before starting the quote agent.');
       return;
@@ -589,48 +628,34 @@ export function Quotes() {
       setError('Quotes cannot be drafted for lost leads. Choose an open or won lead.');
       return;
     }
-    setAgentBusy(true);
-    setAgentError('');
+    agentIntent.current = true;
     setError('');
-    setAgentStatus('');
     try {
-      const run = await apiRequest<QuoteAgentRun>('/workflows/quote-agent/run', {
-        method: 'POST',
-        body: JSON.stringify({
-          lead_id: leadId,
-          rate_card_id: cardId || null,
-          title: title || null,
-          description: description || null,
-          currency,
-          discount_bps: Math.round(Number(discount) * 100),
-          tax_bps: Math.round(Number(tax) * 100),
-          terms: terms || null,
-          line_items: lineItems
-            .filter((line) => line.description.trim())
-            .map((line) => ({
-              description: line.description,
-              quantity: Number(line.quantity),
-              unit_price_cents: line.price ? Math.round(Number(line.price) * 100) : null,
-            })),
-        }),
-      });
-      if (run.status === 'completed') {
-        setAgentStatus(`Agent completed its review and saved a draft quote (${run.steps.length} steps).`);
-        toast.success('Quote draft created for human review.');
-        await load();
-      } else if (run.status === 'paused_for_approval') {
-        setAgentStatus('The agent flagged this quote. It is waiting in the Approvals Inbox; no quote was saved yet.');
-        toast.info('Quote flagged and sent to the Approvals Inbox for review.');
-      } else {
-        throw new Error(run.result_data.error || `Quote agent ended with status: ${run.status}`);
-      }
+      const submission = await submitQuoteAgentJob({
+        lead_id: leadId,
+        rate_card_id: cardId || null,
+        title: title || null,
+        description: description || null,
+        currency,
+        discount_bps: Math.round(Number(discount) * 100),
+        tax_bps: Math.round(Number(tax) * 100),
+        terms: terms || null,
+        line_items: lineItems
+          .filter((line) => line.description.trim())
+          .map((line) => ({
+            description: line.description,
+            quantity: Number(line.quantity),
+            unit_price_cents: line.price ? Math.round(Number(line.price) * 100) : null,
+          })),
+      }, idempotencyKey());
+      await refreshJob(submission.job_id, '/quotes');
+      setSearchParams({ job: submission.job_id }, { replace: true });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Quote agent could not complete';
-      setAgentError(message);
+      const message = err instanceof Error ? err.message : 'Could not submit quote agent job';
       setError(message);
       toast.error(message);
     } finally {
-      setAgentBusy(false);
+      agentIntent.current = false;
     }
   };
 

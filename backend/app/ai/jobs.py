@@ -3,7 +3,6 @@
 import asyncio
 import json
 import time
-import uuid
 from typing import Any, AsyncIterator, Dict, Optional
 
 from fastapi.encoders import jsonable_encoder
@@ -11,7 +10,7 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.models.job import BackgroundJob
-from app.services.job_service import complete, fail, get_job as get_persistent_job, set_progress, submit_job
+from app.services.job_service import complete, fail, set_progress, submit_job
 
 
 def _legacy_state(job: BackgroundJob) -> Dict[str, Any]:
@@ -88,6 +87,7 @@ class JobManager:
     ) -> AsyncIterator[str]:
         """Stream legacy per-job events until a terminal state or disconnect."""
         last_version = -1
+        last_ping = time.monotonic()
         while True:
             job = await self.get_job(job_id)
             if not job:
@@ -100,6 +100,9 @@ class JobManager:
                 last_version = version
             if job["status"] in ("completed", "failed", "cancelled"):
                 return
+            if time.monotonic() - last_ping >= 15:
+                yield ": ping\n\n"
+                last_ping = time.monotonic()
             await asyncio.sleep(poll_interval_seconds)
 
 

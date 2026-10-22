@@ -230,11 +230,13 @@ async def get_job_details(
     membership: Membership = Depends(get_current_membership),
     db: AsyncSession = Depends(get_db),
 ):
-    job = await db.scalar(select(BackgroundJob).where(
+    query = select(BackgroundJob).where(
         BackgroundJob.id == job_id,
         BackgroundJob.org_id == org.id,
-        *(([] if membership.role == RoleType.OWNER.value else [BackgroundJob.user_id == user.id])),
-    ))
+    )
+    if membership.role != RoleType.OWNER.value:
+        query = query.where(BackgroundJob.user_id == user.id)
+    job = await db.scalar(query)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     data = _job_read(job, include_result=job.status in _TERMINAL)
@@ -297,6 +299,7 @@ async def retry_job(
         workflow_run_id=job.workflow_run_id,
         retry_of_job_id=job.id,
         max_attempts=job.max_attempts,
+        max_active_per_org=settings.JOBS_MAX_ACTIVE_PER_ORG,
     )
     from app.jobs.queue import enqueue_job
 
