@@ -1,5 +1,5 @@
-from datetime import date
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date, datetime, timezone
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -246,8 +246,17 @@ async def decide_approval(entity_type: str, entity_id: str, data: Decision, org:
         approval = await db.scalar(select(QuoteAgentApproval).where(
             QuoteAgentApproval.id == entity_id, QuoteAgentApproval.org_id == org.id
         ))
-        if not approval or approval.status != "pending":
+        if not approval:
             raise HTTPException(status_code=404, detail="Approval item not found")
+        transition = await db.execute(update(QuoteAgentApproval).where(
+            QuoteAgentApproval.id == entity_id,
+            QuoteAgentApproval.org_id == org.id,
+            QuoteAgentApproval.status == "pending",
+        ).values(status=data.decision, updated_at=datetime.now(timezone.utc)))
+        if transition.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Approval item has already been decided")
+        await db.commit()
+        await db.refresh(approval)
         run = await db.scalar(select(WorkflowRun).where(
             WorkflowRun.id == approval.workflow_run_id, WorkflowRun.org_id == org.id,
             WorkflowRun.workflow_type == "quote_agent"
@@ -260,6 +269,23 @@ async def decide_approval(entity_type: str, entity_id: str, data: Decision, org:
                  "approval_id": approval.id}
         await execute_quote_agent(db, provider, state, resume_decision=data.decision)
         await db.refresh(run)
+        linked_job = await db.scalar(select(BackgroundJob).where(
+            BackgroundJob.org_id == org.id,
+            BackgroundJob.workflow_run_id == run.id,
+            BackgroundJob.status == "waiting_for_approval",
+        ))
+        if linked_job:
+            result_data = dict(run.result_data or {})
+            if data.decision == "rejected":
+                result_data["outcome"] = "rejected"
+            await complete(
+                db,
+                linked_job.id,
+                result_data,
+                result_ref_type="quote" if result_data.get("quote_id") else None,
+                result_ref_id=result_data.get("quote_id"),
+                message="Quote approval completed",
+            )
         return await _agent_run_detail(db, run)
     else: raise HTTPException(status_code=404, detail="Unsupported approval item")
     await db.commit(); return {"id": entity_id, "entity_type": entity_type, "status": data.decision}
