@@ -14,6 +14,7 @@ from app.services.job_service import claim_job, complete, fail, heartbeat, set_p
 
 logger = structlog.get_logger(__name__)
 _log = logging.getLogger(__name__)
+provider_factory = get_llm_provider
 
 
 def _public_error(exc: Exception) -> tuple[str, str]:
@@ -55,7 +56,7 @@ async def run_job(ctx: dict, job_id: str) -> None:
             handler = HANDLERS.get(job.job_type)
             if handler is None:
                 raise ValueError(f"No handler registered for job type {job.job_type}")
-            provider = get_llm_provider()
+            provider = provider_factory()
             outcome = await handler(db, job, provider)
             result = outcome.get("result")
             if outcome.get("status") == "waiting_for_approval":
@@ -64,6 +65,9 @@ async def run_job(ctx: dict, job_id: str) -> None:
                 job.message = outcome.get("message", "Waiting for approval")
                 job.result = result
                 job.version += 1
+                from datetime import datetime, timezone
+
+                job.updated_at = datetime.now(timezone.utc)
                 await db.commit()
             else:
                 await set_progress(db, job_id, 100, "Job completed", commit=False)

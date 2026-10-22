@@ -1,7 +1,7 @@
 import asyncio
 import time
 from contextlib import asynccontextmanager
-from typing import Any, TypedDict
+from typing import Any, Awaitable, Callable, TypedDict
 from pydantic import BaseModel
 
 from sqlalchemy import select
@@ -57,23 +57,30 @@ def _model_name(provider: LLMProvider, fast: bool = False) -> str:
 
 
 async def _record_step(db: AsyncSession, state: QuoteAgentState, node: str, model: str,
-                       started: float, summary: str, status: str = "completed") -> None:
+                       started: float, summary: str, status: str = "completed",
+                       commit: bool = True) -> None:
     db.add(WorkflowStep(
         org_id=state["org_id"], workflow_run_id=state["run_id"], node_name=node,
         model=model, latency_ms=(time.monotonic() - started) * 1000,
         status=status, result_summary=summary[:1000],
     ))
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
 
 
 async def _set_run(db: AsyncSession, run_id: str, org_id: str, status: str,
-                   result_data: dict | None = None) -> None:
+                   result_data: dict | None = None, commit: bool = True) -> None:
     run = await db.scalar(select(WorkflowRun).where(WorkflowRun.id == run_id, WorkflowRun.org_id == org_id))
     if run:
         run.status = status
         if result_data is not None:
             run.result_data = result_data
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
 
 
 async def _lead_and_rate_card(db: AsyncSession, state: QuoteAgentState):
@@ -94,7 +101,12 @@ async def _lead_and_rate_card(db: AsyncSession, state: QuoteAgentState):
     return lead, rate_card
 
 
-def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
+def _build_graph(
+    db: AsyncSession,
+    provider: LLMProvider,
+    checkpointer,
+    progress_cb: Callable[[int, str], Awaitable[None]] | None = None,
+):
     from langgraph.errors import GraphBubbleUp
     from langgraph.graph import END, START, StateGraph
     from langgraph.types import Command, interrupt
@@ -233,9 +245,9 @@ def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
             "lead_id": state["lead_id"], "quote_id": quote["id"], "quote_status": quote["status"],
             "flags": state.get("review_flags", []), "assumptions": state.get("assumptions", []),
         }
-        await _set_run(db, state["run_id"], state["org_id"], "completed", result_data)
+        await _set_run(db, state["run_id"], state["org_id"], "completed", result_data, commit=False)
         await _record_step(db, state, "save_quote", "none", started,
-                           f"Saved quote draft {quote['id']}")
+                           f"Saved quote draft {quote['id']}", commit=False)
         return {"quote_id": quote["id"]}
 
     async def reject_quote(state: QuoteAgentState) -> dict:
@@ -251,6 +263,14 @@ def _build_graph(db: AsyncSession, provider: LLMProvider, checkpointer):
         async def wrapped(state: QuoteAgentState) -> dict:
             started = time.monotonic()
             try:
+                progress = {
+                    "understand_request": (15, "Understanding the quote request"),
+                    "retrieve_context": (35, "Retrieving pricing and knowledge context"),
+                    "draft_quote": (60, "Generating quote draft"),
+                    "self_review": (80, "Reviewing quote draft"),
+                }.get(name)
+                if progress and progress_cb:
+                    await progress_cb(*progress)
                 changes = await node(state)
                 return changes
             except GraphBubbleUp:
@@ -302,13 +322,23 @@ async def _checkpointer(db: AsyncSession):
         yield _memory_checkpointer
 
 
-async def execute_quote_agent(db: AsyncSession, provider: LLMProvider, state: QuoteAgentState,
-                              resume_decision: str | None = None) -> dict:
+async def execute_quote_agent(
+    db: AsyncSession,
+    provider: LLMProvider,
+    state: QuoteAgentState,
+    resume_decision: str | None = None,
+    progress_cb: Callable[[int, str], Awaitable[None]] | None = None,
+    recover: bool = False,
+) -> dict:
     from langgraph.types import Command
 
     async with _checkpointer(db) as saver:
-        graph = _build_graph(db, provider, saver)
+        graph = _build_graph(db, provider, saver, progress_cb)
         config = {"configurable": {"thread_id": state["run_id"]}}
+        if recover:
+            checkpoint = await graph.aget_state(config)
+            if checkpoint and checkpoint.next:
+                return await graph.ainvoke(None, config=config)
         if resume_decision is None:
             return await graph.ainvoke(state, config=config)
         return await graph.ainvoke(Command(resume=resume_decision), config=config)
