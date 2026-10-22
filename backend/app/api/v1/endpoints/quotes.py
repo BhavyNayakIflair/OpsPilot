@@ -71,6 +71,7 @@ async def draft_quote_async(
     user: User = Depends(get_current_user),
     org: Organization = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
+    provider: LLMProvider = Depends(get_llm_provider),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     lead = await _owned(db, Lead, data.lead_id, org.id)
@@ -107,7 +108,7 @@ async def draft_quote_async(
         max_active_per_org=settings.JOBS_MAX_ACTIVE_PER_ORG,
     )
     if job.status == "queued":
-        await enqueue_job(job.id)
+        await enqueue_job(job.id, provider=provider)
 
     return {
         "job_id": job.id,

@@ -56,7 +56,7 @@ async def run_job(ctx: dict, job_id: str) -> None:
             handler = HANDLERS.get(job.job_type)
             if handler is None:
                 raise ValueError(f"No handler registered for job type {job.job_type}")
-            provider = provider_factory()
+            provider = ctx.get("provider") or provider_factory()
             outcome = await handler(db, job, provider)
             result = outcome.get("result")
             if outcome.get("status") == "waiting_for_approval":

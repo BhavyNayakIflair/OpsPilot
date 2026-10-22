@@ -14,7 +14,7 @@ class JobQueue(Protocol):
 
 
 class ArqJobQueue:
-    async def enqueue(self, job_id: str) -> None:
+    async def enqueue(self, job_id: str, provider=None) -> None:
         from arq.connections import create_pool, RedisSettings
 
         pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
@@ -33,7 +33,7 @@ class InlineJobQueue:
     def __init__(self, runner: Callable[[dict, str], Awaitable[None]] | None = None):
         self._runner = runner
 
-    async def enqueue(self, job_id: str) -> None:
+    async def enqueue(self, job_id: str, provider=None) -> None:
         if self._runner is None:
             from app.jobs.runner import run_job
 
@@ -41,7 +41,10 @@ class InlineJobQueue:
         else:
             runner = self._runner
         logger.warning("Running background job inline; this mode is not durable")
-        task = asyncio.create_task(runner({}, job_id), name=f"inline-job-{job_id}")
+        task = asyncio.create_task(
+            runner({"provider": provider} if provider is not None else {}, job_id),
+            name=f"inline-job-{job_id}",
+        )
         _inline_tasks.add(task)
         task.add_done_callback(_inline_tasks.discard)
 
@@ -62,10 +65,13 @@ async def get_job_queue() -> JobQueue:
     return ArqJobQueue()
 
 
-async def enqueue_job(job_id: str) -> bool:
+async def enqueue_job(job_id: str, provider=None) -> bool:
     try:
         queue = await get_job_queue()
-        await queue.enqueue(job_id)
+        if isinstance(queue, InlineJobQueue):
+            await queue.enqueue(job_id, provider=provider)
+        else:
+            await queue.enqueue(job_id)
         return True
     except Exception:
         logger.exception("Could not enqueue background job", extra={"job_id": job_id})
