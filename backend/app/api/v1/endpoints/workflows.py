@@ -1,7 +1,7 @@
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_tenant, get_current_user, get_current_membership, require_role
@@ -17,6 +17,10 @@ from app.models.content import WorkflowRun, WorkflowStep, QuoteAgentApproval
 from app.models.quotes import RateCard
 from app.schemas.quotes import QuoteDraftLineItem
 from app.services.quote_agent_service import execute_quote_agent
+from app.core.config import settings
+from app.jobs.queue import enqueue_job
+from app.models.job import BackgroundJob
+from app.services.job_service import complete, submit_job
 
 router = APIRouter()
 
@@ -52,7 +56,7 @@ async def _agent_run_detail(db: AsyncSession, run: WorkflowRun):
     }
 
 
-@router.post("/quote-agent/run", status_code=201)
+@router.post("/quote-agent/run", status_code=201, deprecated=True)
 async def run_quote_agent(data: QuoteAgentRequest, user: User = Depends(get_current_user),
                           org: Organization = Depends(get_current_tenant),
                           membership: Membership = Depends(get_current_membership),
@@ -91,6 +95,82 @@ async def run_quote_agent(data: QuoteAgentRequest, user: User = Depends(get_curr
         await db.refresh(run)
     await db.refresh(run)
     return await _agent_run_detail(db, run)
+
+
+@router.post("/quote-agent/run-async", status_code=202)
+async def run_quote_agent_async(
+    data: QuoteAgentRequest,
+    user: User = Depends(get_current_user),
+    org: Organization = Depends(get_current_tenant),
+    membership: Membership = Depends(get_current_membership),
+    db: AsyncSession = Depends(get_db),
+    provider: LLMProvider = Depends(get_llm_provider),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    if membership.role not in (RoleType.OWNER.value, RoleType.SALES.value, RoleType.PROJECT_MANAGER.value):
+        raise HTTPException(status_code=403, detail="Your role cannot run the quote agent")
+    lead = await db.scalar(select(Lead).where(Lead.id == data.lead_id, Lead.org_id == org.id))
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if lead.is_lost():
+        raise HTTPException(status_code=409, detail="Quotes cannot be drafted for lost leads")
+    card = None
+    if data.rate_card_id:
+        card = await db.scalar(select(RateCard).where(
+            RateCard.id == data.rate_card_id,
+            RateCard.org_id == org.id,
+        ))
+        if not card:
+            raise HTTPException(status_code=404, detail="Rate card not found")
+        if card.currency.upper() != lead.currency.upper():
+            raise HTTPException(status_code=422, detail="Rate card currency must match the lead currency")
+
+    quote_request = data.model_dump(exclude={"lead_id", "rate_card_id"})
+    normalized_input = {
+        "lead_id": lead.id,
+        "rate_card_id": card.id if card else None,
+        "quote_request": quote_request,
+    }
+    job, deduplicated = await submit_job(
+        db,
+        org_id=org.id,
+        user_id=user.id,
+        job_type="quote_agent",
+        input_data=normalized_input,
+        idempotency_key=idempotency_key,
+        subject_type="lead",
+        subject_id=lead.id,
+        subject_label=lead.title,
+        max_active_per_org=settings.JOBS_MAX_ACTIVE_PER_ORG,
+    )
+    if not deduplicated:
+        run = WorkflowRun(
+            org_id=org.id,
+            user_id=user.id,
+            workflow_type="quote_agent",
+            status="running",
+            input_data={
+                "lead_id": lead.id,
+                "rate_card_id": card.id if card else None,
+                "quote_request": quote_request,
+            },
+            result_data={},
+        )
+        db.add(run)
+        await db.commit()
+        await db.refresh(run)
+        job.workflow_run_id = run.id
+        job.version += 1
+        job.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+    if job.status == "queued":
+        await enqueue_job(job.id, provider=provider)
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "message": job.message,
+        "deduplicated": deduplicated,
+    }
 
 
 @router.get("/runs/{run_id}")
