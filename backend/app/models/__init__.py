@@ -14,6 +14,7 @@ from app.models.billing import Invoice, InvoiceLineItem, Payment, Expense, Invoi
 from app.models.content import (MigrationJob, KnowledgeDocument, WorkflowRun, DocumentChunk,
                                 WorkflowStep, QuoteAgentApproval)
 from app.models.model_request import ModelRequest
+from app.models.job import BackgroundJob
 
 __all__ = [
     "Base",
@@ -32,4 +33,5 @@ __all__ = [
     "MigrationJob", "KnowledgeDocument", "WorkflowRun", "DocumentChunk", "WorkflowStep",
     "QuoteAgentApproval",
     "ModelRequest",
+    "BackgroundJob",
 ]

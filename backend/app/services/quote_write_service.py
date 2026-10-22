@@ -9,7 +9,8 @@ from app.schemas.quotes import QuoteCreate
 
 
 async def persist_quote(db: AsyncSession, org: Organization, data: QuoteCreate,
-                        status: str = "draft", existing: Quote | None = None) -> dict:
+                        status: str = "draft", existing: Quote | None = None,
+                        commit: bool = True) -> dict:
     card = await _owned(db, RateCard, data.rate_card_id, org.id) if data.rate_card_id else None
     if card and card.currency.upper() != data.currency.upper():
         raise HTTPException(status_code=422, detail="Quote currency must match its rate card")
@@ -41,8 +42,11 @@ async def persist_quote(db: AsyncSession, org: Organization, data: QuoteCreate,
     for item in data.line_items:
         db.add(QuoteLineItem(org_id=org.id, quote_id=quote.id, **item.model_dump(),
                              amount_cents=item.quantity * item.unit_price_cents))
-    await db.commit()
-    await db.refresh(quote)
+    if commit:
+        await db.commit()
+        await db.refresh(quote)
+    else:
+        await db.flush()
     lines = (await db.scalars(select(QuoteLineItem).where(
         QuoteLineItem.quote_id == quote.id, QuoteLineItem.org_id == quote.org_id
     ))).all()
