@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +43,7 @@ async def submit_job(
     workflow_run_id: str | None = None,
     retry_of_job_id: str | None = None,
     max_attempts: int = 2,
+    max_active_per_org: int | None = None,
 ) -> tuple[BackgroundJob, bool]:
     if idempotency_key is not None and len(idempotency_key) > 80:
         raise HTTPException(status_code=422, detail="Idempotency-Key must be at most 80 characters")
@@ -66,6 +67,17 @@ async def submit_job(
     ))
     if existing:
         return existing, True
+
+    if max_active_per_org is not None:
+        active_count = await db.scalar(select(func.count()).select_from(BackgroundJob).where(
+            BackgroundJob.org_id == org_id,
+            BackgroundJob.status.in_(ACTIVE_STATUSES),
+        ))
+        if active_count is not None and active_count >= max_active_per_org:
+            raise HTTPException(
+                status_code=429,
+                detail="This organization already has the maximum number of active AI jobs. Try again later.",
+            )
 
     now = _now()
     job = BackgroundJob(

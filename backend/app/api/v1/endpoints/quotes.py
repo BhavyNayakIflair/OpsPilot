@@ -1,21 +1,25 @@
-import asyncio
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.jobs import job_manager
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
-from app.core.deps import get_current_tenant
+from app.core.deps import get_current_tenant, get_current_user
 from app.gateway.base import LLMProvider, ProviderError
 from app.gateway.factory import get_llm_provider
+from app.models.job import BackgroundJob
 from app.models.organization import Organization
+from app.models.user import User
 from app.models.crm import Lead, Contact, Company
 from app.models.quotes import RateCard, Quote, QuoteLineItem
 from app.schemas.quotes import QuoteCreate, QuoteDraftRequest, RateCardCreate
 from app.services.quote_draft_service import generate_quote_draft
 from app.services.quote_write_service import persist_quote
+from app.services.job_service import submit_job as submit_background_job
+from app.jobs.queue import enqueue_job
 
 router = APIRouter()
 
@@ -64,9 +68,10 @@ async def _run_quote_draft_job(
 @router.post("/draft-async", status_code=202)
 async def draft_quote_async(
     data: QuoteDraftRequest,
+    user: User = Depends(get_current_user),
     org: Organization = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
-    provider: LLMProvider = Depends(get_llm_provider),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     lead = await _owned(db, Lead, data.lead_id, org.id)
     if lead.is_lost():
@@ -83,39 +88,76 @@ async def draft_quote_async(
     if rate_card and currency != rate_card.currency.upper():
         raise HTTPException(status_code=422, detail="Quote currency must match its rate card")
 
-    job_id = await job_manager.create_job(meta={"org_id": org.id, "lead_id": lead.id})
-    request_data = {**data.model_dump(exclude={"lead_id", "rate_card_id"}), "currency": currency}
-
-    asyncio.create_task(
-        _run_quote_draft_job(
-            job_id=job_id,
-            org_id=org.id,
-            lead_id=lead.id,
-            rate_card_id=rate_card.id if rate_card else None,
-            data_dict=request_data,
-            provider=provider,
-        )
+    normalized_input = {
+        **data.model_dump(),
+        "lead_id": lead.id,
+        "rate_card_id": rate_card.id if rate_card else None,
+        "currency": currency,
+    }
+    job, deduplicated = await submit_background_job(
+        db,
+        org_id=org.id,
+        user_id=user.id,
+        job_type="quote_draft",
+        input_data=normalized_input,
+        idempotency_key=idempotency_key,
+        subject_type="lead",
+        subject_id=lead.id,
+        subject_label=lead.title,
+        max_active_per_org=settings.JOBS_MAX_ACTIVE_PER_ORG,
     )
+    if job.status == "queued":
+        await enqueue_job(job.id)
 
-    return {"job_id": job_id, "status": "queued", "message": "Quote drafting initiated in background"}
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "message": job.message,
+        "deduplicated": deduplicated,
+    }
 
 
 @router.get("/draft-status/{job_id}")
-async def get_draft_job_status(job_id: str, org: Organization = Depends(get_current_tenant)):
-    job = await job_manager.get_job(job_id)
+async def get_draft_job_status(
+    job_id: str,
+    org: Organization = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    job = await db.scalar(select(BackgroundJob).where(
+        BackgroundJob.id == job_id,
+        BackgroundJob.org_id == org.id,
+    ))
     if not job:
         raise HTTPException(status_code=404, detail="Draft job not found")
-    return job
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "progress": job.progress,
+        "message": job.message,
+        "result": job.result,
+        "error": job.error_message,
+        "meta": {"org_id": job.org_id, "lead_id": job.subject_id},
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+    }
 
 
 @router.get("/draft-status/{job_id}/events")
-async def get_draft_job_events(job_id: str, org: Organization = Depends(get_current_tenant)):
-    job = await job_manager.get_job(job_id)
+async def get_draft_job_events(
+    job_id: str,
+    org: Organization = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    job = await db.scalar(select(BackgroundJob).where(
+        BackgroundJob.id == job_id,
+        BackgroundJob.org_id == org.id,
+    ))
     if not job:
         raise HTTPException(status_code=404, detail="Draft job not found")
     return StreamingResponse(
         job_manager.stream_job_events(job_id),
         media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -148,7 +190,7 @@ def _totals(lines, discount_bps, tax_bps):
     return subtotal, total
 
 
-@router.post("/draft", status_code=201)
+@router.post("/draft", status_code=201, deprecated=True)
 async def draft_quote(data: QuoteDraftRequest, org: Organization = Depends(get_current_tenant),
                       db: AsyncSession = Depends(get_db), provider: LLMProvider = Depends(get_llm_provider)):
     lead = await _owned(db, Lead, data.lead_id, org.id)

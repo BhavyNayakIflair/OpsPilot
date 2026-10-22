@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth, organizations, users, health, crm, quotes,
-    operations, billing, migration, documents, workflows, knowledge, assignments
+    operations, billing, migration, documents, workflows, knowledge, assignments, jobs
 )
 
 api_router = APIRouter()
@@ -20,3 +20,4 @@ api_router.include_router(migration.router, prefix="/migration", tags=["Migratio
 api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
 api_router.include_router(knowledge.router, prefix="/knowledge", tags=["Knowledge search"])
 api_router.include_router(workflows.router, prefix="/workflows", tags=["Workflows & approvals"])
+api_router.include_router(jobs.router, prefix="/jobs", tags=["Background jobs"])
