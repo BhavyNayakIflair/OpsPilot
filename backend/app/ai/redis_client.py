@@ -5,6 +5,7 @@ Ensures zero-dependency operation in local development and tests when Redis is n
 import asyncio
 import logging
 import time
+import weakref
 from typing import Any, Dict, Optional
 
 from app.core.config import settings
@@ -77,8 +78,8 @@ class MemoryRedisFallback:
         pass
 
 
-_redis_instance: Optional[Any] = None
-_using_fallback: bool = False
+_redis_instances: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_fallback = MemoryRedisFallback()
 
 
 async def get_redis_client():
@@ -87,10 +88,11 @@ async def get_redis_client():
     If Redis is unreachable or raises a connection error, transparently
     falls back to MemoryRedisFallback without interrupting operations.
     """
-    global _redis_instance, _using_fallback
+    loop = asyncio.get_running_loop()
 
-    if _redis_instance is not None:
-        return _redis_instance
+    cached = _redis_instances.get(loop)
+    if cached is not None:
+        return cached
 
     try:
         import redis.asyncio as aioredis
@@ -101,21 +103,21 @@ async def get_redis_client():
             decode_responses=True,
         )
         await client.ping()
-        _redis_instance = client
-        _using_fallback = False
+        _redis_instances[loop] = client
         logger.info("Connected to Redis at %s", settings.REDIS_URL)
-        return _redis_instance
+        return client
     except Exception as exc:
         logger.debug("Redis unavailable (%s); using in-memory store fallback", exc)
-        _redis_instance = MemoryRedisFallback()
-        _using_fallback = True
-        return _redis_instance
+        _redis_instances[loop] = _fallback
+        return _fallback
 
 
 def reset_redis_fallback():
     """Reset the in-memory fallback store (useful in test teardowns)."""
-    global _redis_instance, _using_fallback
     _MEMORY_KV.clear()
     _MEMORY_EXPIRES.clear()
-    _redis_instance = None
-    _using_fallback = False
+    _redis_instances.clear()
+
+
+def is_memory_fallback(client: Any) -> bool:
+    return isinstance(client, MemoryRedisFallback)

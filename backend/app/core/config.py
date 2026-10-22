@@ -1,6 +1,6 @@
 from typing import List, Union
 from pathlib import Path
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import AnyHttpUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     
     # Redis for caching, arq background worker, and pub/sub
     REDIS_URL: str = "redis://localhost:6379/0"
+    JOBS_EXECUTION_MODE: str = "auto"
+    JOBS_QUEUE_NAME: str = "opspilot:ai"
+    JOBS_AI_MAX_CONCURRENCY: int | None = None
+    JOBS_MAX_ACTIVE_PER_ORG: int = 3
+    JOBS_STALE_HEARTBEAT_SECONDS: int = 90
+    JOBS_RETENTION_DAYS: int = 30
+    JOBS_SSE_MAX_SECONDS: int = 300
+    JOBS_SSE_POLL_SECONDS: float = 1.0
     
     # Object storage (MinIO locally / S3)
     S3_ENDPOINT_URL: str = "http://localhost:9000"
@@ -56,6 +64,14 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore"
     )
+
+    @model_validator(mode="after")
+    def set_job_concurrency_default(self):
+        if self.JOBS_AI_MAX_CONCURRENCY is None:
+            self.JOBS_AI_MAX_CONCURRENCY = 1 if self.LLM_PROVIDER.casefold() == "ollama" else 3
+        if self.JOBS_EXECUTION_MODE not in {"auto", "queue", "inline"}:
+            raise ValueError("JOBS_EXECUTION_MODE must be auto, queue, or inline")
+        return self
 
 
 settings = Settings()
