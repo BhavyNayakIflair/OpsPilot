@@ -732,7 +732,6 @@ export function Quotes() {
       setTax(String(quote.tax_bps / 100));
       setTerms(quote.terms || '');
       setAssumptions([]);
-      setAiPreview(null);
       setLineItems(
         quote.line_items.map((line) => ({
           description: line.description,
@@ -1101,7 +1100,7 @@ export function Quotes() {
           This is a preview only. Click below to populate the editor or discard.
         </span>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setAiPreview(null)}>Discard</Button>
+          <Button variant="outline" size="sm" onClick={() => void discardAiPreview()}>Discard</Button>
           <Button variant="primary" size="sm" onClick={applyAiPreview}>Use this draft →</Button>
         </div>
       </CardFooter>
