@@ -439,9 +439,7 @@ function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' | 'lg'
     </span>
   );
 }
-function AvatarGroup({ names, max = 3 }: { names: string[]; max?: number }) {
-
-function AvatarGroup({ names, max = 3 }: { names: string[]; max?: number }) {
+export function AvatarGroup({ names, max = 3 }: { names: string[]; max?: number }) {
   const visible = names.slice(0, max);
   const extra = names.length - visible.length;
   return (
@@ -1373,7 +1371,7 @@ export function LeaveManagementPage() {
     <main className="page-shell space-y-6">
       <PageHeader eyebrow="Team" title="Leave management" description="Submit leave, review requests, and see approved absences." statChips={[{ label: 'Working days', value: days, tone: 'accent' }, { label: 'Requests pending', value: pendingMine, tone: 'warning' }]} />
       {pageError instanceof Error && <QueryError error={pageError} retry={() => { void profileQuery.refetch(); void peopleQuery.refetch(); void leaveTypesQuery.refetch(); void mineQuery.refetch(); }} />}
-      <SegmentedTabs label="Leave views" items={tabs} value={tab} onChange={setTab} />
+      <SegmentedTabs label="Leave views" items={tabs} value={tab} onChange={(value) => setTab(value)} />
 
       {tab === 'mine' && (
         <>
