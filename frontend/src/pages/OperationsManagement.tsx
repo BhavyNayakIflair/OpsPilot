@@ -439,8 +439,9 @@ function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' | 'lg'
     </span>
   );
 }
+function AvatarGroup({ names, max = 3 }: { names: string[]; max?: number }) {
 
-
+function AvatarGroup({ names, max = 3 }: { names: string[]; max?: number }) {
   const visible = names.slice(0, max);
   const extra = names.length - visible.length;
   return (
