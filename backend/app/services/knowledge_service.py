@@ -10,8 +10,8 @@ from app.gateway.base import LLMProvider, ProviderError
 from app.models.content import DocumentChunk, KnowledgeDocument
 from app.models.base import generate_uuid
 
-CHUNK_SIZE = 1200
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 160
 EMBEDDING_DIMENSION = 768
 MIN_RELEVANCE = 0.35
 
@@ -36,7 +36,12 @@ def chunk_text(content: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLA
     while start < len(source):
         end = min(start + size, len(source))
         if end < len(source):
-            boundary = source.rfind(" ", start + size // 2, end)
+            sentence_boundary = max(
+                source.rfind(". ", start + size // 2, end),
+                source.rfind("? ", start + size // 2, end),
+                source.rfind("! ", start + size // 2, end),
+            )
+            boundary = sentence_boundary + 1 if sentence_boundary > start else source.rfind(" ", start + size // 2, end)
             if boundary > start:
                 end = boundary
         chunk = source[start:end].strip()

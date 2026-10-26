@@ -28,6 +28,21 @@ class FakeProvider(LLMProvider):
         return [[1.0] + [0.0] * 767 for _ in texts]
 
 
+class RewriteProvider(FakeProvider):
+    def generate(self, prompt, system="", temperature=0.2, response_model=None, **kwargs):
+        self.prompts.append(prompt)
+        return response_model.model_validate({
+            "title": "Vending Machine Platform Development",
+            "description": "Design and develop the vending machine platform, including the backend, customer-facing landing page, location experience, and an interactive GSAP website.",
+            "currency": "USD",
+            "line_items": [
+                {"description": "Implementation", "quantity": 1, "unit_price_cents": 50000},
+            ],
+            "terms": "Payment is due in three milestones: 50% as an advance, 40% upon completion, and 10% one year after completion.",
+            "assumptions": [],
+        })
+
+
 async def _setup_lead_and_card(client: AsyncClient, suffix: str):
     registered = await client.post("/api/v1/auth/register", json={
         "email": f"ai_quote_{suffix}@example.com", "password": "Password123!",
@@ -64,6 +79,30 @@ async def test_ai_quote_draft_is_saved_for_review(async_client: AsyncClient):
     assert result["quote"]["line_items"][0]["unit_price_cents"] == 15000
     assert result["assumptions"] == ["Scope is based on the lead notes."]
     assert "default_rate_cents" in provider.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_ai_quote_draft_rewrites_proposal_metadata_from_line_items(async_client: AsyncClient):
+    headers, card, lead = await _setup_lead_and_card(async_client, "rewrite")
+    provider = RewriteProvider()
+    app.dependency_overrides[get_llm_provider] = lambda: provider
+
+    response = await async_client.post("/api/v1/quotes/draft", headers=headers, json={
+        "lead_id": lead["id"],
+        "rate_card_id": card["id"],
+        "title": "",
+        "description": "vending machine stuff",
+        "terms": "50% advance and 40% after completion and 10% after 1 year",
+        "line_items": [{"description": "Vending machine backend", "quantity": 1, "unit_price_cents": 50000}],
+    })
+
+    assert response.status_code == 201, response.text
+    quote = response.json()["quote"]
+    assert quote["title"] == "Vending Machine Platform Development"
+    assert quote["description"].startswith("Design and develop")
+    assert quote["terms"].startswith("Payment is due in three milestones")
+    assert lead["title"] not in provider.prompts[0]
+    assert "derived from the requested line items" in provider.prompts[0]
 
 
 @pytest.mark.asyncio
@@ -135,4 +174,3 @@ async def test_ai_quote_draft_allows_won_leads_but_rejects_lost(async_client: As
     })
     assert lost_draft.status_code == 409
     assert "lost" in lost_draft.json()["detail"].lower()
-
