@@ -31,4 +31,8 @@ async def test_root_readiness_probe(async_client: AsyncClient):
     assert data["app"] == "OpsPilot"
     assert "ai_providers" in data
     assert "mock" in data["ai_providers"]
+    assert "queue" in data
+    assert "status" in data["queue"]
+    assert "mode" in data["queue"]
+    assert "redis_connected" in data["queue"]
 

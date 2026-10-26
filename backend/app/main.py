@@ -72,7 +72,7 @@ async def root_health():
 @app.get("/ready", tags=["system"])
 async def root_ready():
     """
-    Readiness probe: checks DB and returns cached AI provider states.
+    Readiness probe: checks DB, Redis/queue, and returns cached AI provider states.
     """
     from sqlalchemy import text
     from app.core.database import AsyncSessionLocal
@@ -86,15 +86,33 @@ async def root_ready():
         db_status = f"unhealthy: {exc}"
 
     from app.ai.observability.metrics import ai_metrics
+    from app.ai.redis_client import get_redis_client, is_memory_fallback
 
     ai_status = get_ai_providers_status()
-    is_ready = ("unhealthy" not in db_status)
+    
+    queue_status = "ok"
+    redis_connected = False
+    try:
+        client = await get_redis_client()
+        redis_connected = not is_memory_fallback(client)
+        if settings.JOBS_EXECUTION_MODE == "queue" and not redis_connected:
+            queue_status = "degraded: redis unavailable"
+    except Exception as exc:
+        queue_status = f"unhealthy: {exc}"
+
+    is_ready = ("unhealthy" not in db_status) and ("unhealthy" not in queue_status)
 
     return {
         "status": "ok" if is_ready else "degraded",
         "app": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "database": db_status,
+        "queue": {
+            "status": queue_status,
+            "mode": settings.JOBS_EXECUTION_MODE,
+            "queue_name": settings.JOBS_QUEUE_NAME,
+            "redis_connected": redis_connected,
+        },
         "ai_providers": ai_status,
         "ai_metrics": ai_metrics.get_summary(),
     }

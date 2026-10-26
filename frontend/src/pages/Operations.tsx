@@ -2,6 +2,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type Componen
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { apiRequest } from '../lib/api';
+import { useJobs, useJobForSubject } from '../context/JobsContext';
+import { submitQuoteAgentJob } from '../lib/jobs';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/toast';
 import { Link, useNavigate } from 'react-router-dom';
@@ -4258,9 +4260,34 @@ export function WorkflowsPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const [aiStatus, setAiStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
-  const [aiErrorMsg, setAiErrorMsg] = useState('');
-  const [aiResult, setAiResult] = useState<{ status: string; message: string; quoteId?: string } | null>(null);
+  const { refreshJob, acknowledge, retry } = useJobs();
+  const agentJob = useJobForSubject('quote_agent', leadId);
+  const submittingRef = useRef(false);
+
+  const isRunning = Boolean(agentJob && (agentJob.status === 'queued' || agentJob.status === 'running'));
+  const isWaitingApproval = agentJob?.status === 'waiting_for_approval';
+  const isCompleted = agentJob?.status === 'completed';
+  const isFailed = agentJob?.status === 'failed';
+
+  const aiStatus: 'idle' | 'running' | 'success' | 'error' = isRunning
+    ? 'running'
+    : (isCompleted || isWaitingApproval)
+      ? 'success'
+      : isFailed
+        ? 'error'
+        : 'idle';
+
+  const aiErrorMsg = isFailed ? (agentJob?.error_message || 'Quote agent failed.') : '';
+
+  const aiResult = (isCompleted || isWaitingApproval) && agentJob
+    ? {
+        status: isCompleted ? 'completed' : 'paused_for_approval',
+        message: agentJob.message || (isCompleted
+          ? 'The agent completed its checks and saved a draft quote for human review.'
+          : 'The agent flagged the quote and sent it to the Approvals Inbox. No quote was saved before review.'),
+        quoteId: (agentJob.result?.quote_id as string | undefined) || agentJob.result_ref_id || (agentJob.result?.quote as { id?: string } | undefined)?.id,
+      }
+    : null;
 
   const [filterValues, setFilterValues] = useState<Record<string, string | string[]>>({
     workflow_type: 'all',
@@ -4289,6 +4316,12 @@ export function WorkflowsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (agentJob?.status === 'completed' || agentJob?.status === 'waiting_for_approval') {
+      void load();
+    }
+  }, [agentJob?.status, load]);
+
   const run = async (type: string) => {
     if (runningCheck) return;
     setRunningCheck(type); setError('');
@@ -4304,45 +4337,49 @@ export function WorkflowsPage() {
   };
 
   const runQuoteAgent = async () => {
-    if (!leadId) return;
-    setAiStatus('running');
-    setAiErrorMsg('');
-    setAiResult(null);
+    if (!leadId || submittingRef.current || isRunning) return;
+    submittingRef.current = true;
     setError('');
     try {
-      const result = await apiRequest<WorkflowRun>('/workflows/quote-agent/run', {
-        method: 'POST',
-        body: JSON.stringify({ lead_id: leadId }),
-      });
-      if (result.status === 'paused_for_approval') {
-        setAiStatus('success');
-        setAiResult({ status: 'paused_for_approval', message: 'The agent flagged the quote and sent it to the Approvals Inbox. No quote was saved before review.' });
-        toast.info('Quote flagged and sent to the Approvals Inbox for review.');
-      } else if (result.status === 'completed') {
-        setAiStatus('success');
-        setAiResult({ status: 'completed', message: 'The agent completed its checks and saved a draft quote for human review.', quoteId: result.result_data.quote_id });
-        toast.success('Quote draft created for human review.');
+      const key = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const submission = await submitQuoteAgentJob({ lead_id: leadId }, key);
+      await refreshJob(submission.job_id, '/operations');
+      if (submission.deduplicated) {
+        toast.info('Reconnected to existing quote agent job.');
       } else {
-        throw new Error(result.result_data.error || `Workflow status: ${result.status}`);
+        toast.info('Quote agent job started.');
       }
       await load();
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Unable to run quote agent';
-      setAiStatus('error');
-      setAiErrorMsg(msg);
       setError(msg);
       toast.error(msg);
+    } finally {
+      submittingRef.current = false;
     }
   };
 
-  const retryQuote = () => {
-    void runQuoteAgent();
+  const retryQuote = async () => {
+    if (agentJob) {
+      try {
+        await retry(agentJob.id);
+        toast.info('Retrying quote agent job...');
+      } catch {
+        void runQuoteAgent();
+      }
+    } else {
+      void runQuoteAgent();
+    }
   };
 
-  const resetQuote = () => {
-    setAiStatus('idle');
-    setAiResult(null);
-    setAiErrorMsg('');
+  const resetQuote = async () => {
+    if (agentJob) {
+      try {
+        await acknowledge(agentJob.id);
+      } catch (err) {
+        console.error('Failed to acknowledge job', err);
+      }
+    }
   };
 
   const filteredRuns = useMemo(() => {
@@ -4482,9 +4519,9 @@ export function WorkflowsPage() {
                       ))}
                     </select>
                   </label>
-                  <Button className="self-end" disabled={!leadId} onClick={() => void runQuoteAgent()}>
+                  <Button className="self-end" disabled={!leadId || isRunning || !canRunAgent} onClick={() => void runQuoteAgent()}>
                     <Sparkles className="h-4 w-4" />
-                    Run quote agent
+                    {isRunning ? 'Running…' : 'Run quote agent'}
                   </Button>
                 </div>
               )}
@@ -4493,9 +4530,9 @@ export function WorkflowsPage() {
                 <div className="space-y-4">
                   <AIProgress
                     steps={aiSteps}
-                    status={aiStatus as 'running' | 'success' | 'error'}
+                    status={aiStatus}
                     errorMessage={aiErrorMsg || undefined}
-                    onRetry={aiStatus === 'error' ? retryQuote : undefined}
+                    onRetry={aiStatus === 'error' ? () => void retryQuote() : undefined}
                     resultPreview={aiResult ? (
                       <div className="ops-pop rounded-ui-xl border border-semantic-success/30 bg-semantic-success-soft/40 p-4">
                         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -4516,7 +4553,7 @@ export function WorkflowsPage() {
                                 Open quotes
                               </Button>
                             )}
-                            <Button variant="secondary" size="sm" onClick={resetQuote}>
+                            <Button variant="secondary" size="sm" onClick={() => void resetQuote()}>
                               Run another
                             </Button>
                           </div>
@@ -4524,6 +4561,13 @@ export function WorkflowsPage() {
                       </div>
                     ) : undefined}
                   />
+                  {aiStatus === 'error' && (
+                    <div className="flex justify-end">
+                      <Button variant="secondary" size="sm" onClick={() => void resetQuote()}>
+                        Dismiss
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>

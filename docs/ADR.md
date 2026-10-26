@@ -57,8 +57,17 @@
 
 ---
 
-## ADR 007: Database & Vector Search
+---
+
+## ADR 008: Persistent Background Jobs & Real-Time Delivery
 - **Status:** Accepted
-- **Context:** Need relational storage for ERP business records and semantic search for SOWs, contracts, and policies.
-- **Decision:** **PostgreSQL 16 with pgvector extension** as the unified data store.
-- **Justification:** Avoids running a separate vector database (e.g. Pinecone/Qdrant), keeping infrastructure simple, cohesive, and easily backup-able via standard Postgres tools.
+- **Context:** Long-running generative AI operations (such as quote drafting, contract analysis, and quote-agent workflows) can take anywhere from seconds to minutes. Ephemeral tasks (`asyncio.create_task`) and purely in-memory states are lost during API or worker restarts, lack proper multi-tenant isolation, and cause duplicate generation on user double-clicks.
+- **Decision:** Implement a **database-backed job system (`background_jobs` table)** coupled with **ARQ (Redis)** for queueing, a **heartbeat reaper** for failure recovery, **idempotency keys & active-request fingerprinting**, and a **Server-Sent Events (SSE) stream** for real-time frontend delivery.
+- **Rules & Guarantees:**
+  1. **Persistence & Durability:** Every AI job is recorded transactionally in PostgreSQL before execution begins.
+  2. **Atomic Worker Claiming:** Workers claim jobs using atomic status transition (`queued` -> `running`) with optimistic locking/versioning.
+  3. **Crash Recovery (Reaper):** A background reaper checks for stale heartbeats. Interrupted jobs with remaining attempts are requeued; jobs exceeding max attempts fail with `worker_lost`; completed items with existing references recover cleanly.
+  4. **Concurrency & Deduplication:** Active requests are deduplicated by SHA-256 fingerprint (`job_type`, `org_id`, `user_id`, `input`). Frontend submission sends `Idempotency-Key` headers to ensure double-clicks return the original job without launching duplicate LLM executions.
+  5. **Real-Time Client Updates:** The frontend maintains a global `JobsProvider` connected to `/jobs/stream` (SSE), broadcasting progress, status, and completion across all browser tabs and views via `ActivityCenter`.
+- **Consequences:** Eliminates runaway LLM costs from accidental duplicate submissions; provides resilient recovery from server or worker restarts; unlocks non-blocking UX where users navigate freely during AI generation.
+
