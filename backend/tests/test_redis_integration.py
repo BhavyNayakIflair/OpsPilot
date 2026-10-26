@@ -48,9 +48,8 @@ async def test_arq_real_redis_end_to_end_job(db_session, monkeypatch):
     lead = Lead(
         org_id=org.id,
         title="Acme Cloud Migration",
-        company_name="Acme Corp",
         status="open",
-        budget_cents=500000,
+        value_cents=500000,
         currency="USD",
     )
     db_session.add(lead)
