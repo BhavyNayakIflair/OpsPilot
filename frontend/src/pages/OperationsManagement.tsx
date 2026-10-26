@@ -440,7 +440,7 @@ function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' | 'lg'
   );
 }
 
-function AvatarStack({ names, max = 4 }: { names: string[]; max?: number }) {
+
   const visible = names.slice(0, max);
   const extra = names.length - visible.length;
   return (
